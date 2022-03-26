@@ -5,8 +5,15 @@ if [[ !$EUID -eq 0 ]]; then
 	exit
 fi
 
-DEV=nvme0n2
-ZONE_CAP=$(expr $(sudo zbd report -i /dev/$DEV | grep -oP '(?<=cap )[0-9xa-f]+' | head -1) + 0)
+KiB=1024
+MiB=1024*$KiB
+
+DEV_1=nvme0n1
+DEV_2=nvme0n2
+NUM_SSD=2
+echo "Test $NUM_SSD Device"
+
+ZONE_CAP=$(expr $(sudo zbd report -i /dev/$DEV_1 | grep -oP '(?<=cap )[0-9xa-f]+' | head -1) + 0)
 FUZZ=5
 BASE_FZ=$(($ZONE_CAP  * (100 - $FUZZ) / 100))
 WB_SIZE=$((1 * $BASE_FZ))
@@ -15,7 +22,7 @@ TARGET_FZ_BASE=$((1 * $WB_SIZE))
 TARGET_FILE_SIZE_MULTIPLIER=1
 MAX_BYTES_FOR_LEVEL_BASE=$((1 * $TARGET_FZ_BASE))
 
-echo "ZONE_CAP=$ZONE_CAP bytes"
+echo "ZONE_CAP=$ZONE_CAP bytes($(($ZONE_CAP/$MiB))MiB)"
 echo "WB_SIZE=$WB_SIZE bytes"
 echo "TARGET_FZ_BASE=$TARGET_FZ_BASE bytes"
 echo "TARGET_FILE_SIZE_MULTIPLIER=$TARGET_FILE_SIZE_MULTIPLIER"
@@ -25,18 +32,21 @@ echo "MAX_BYTES_FOR_LEVEL_BASE=$MAX_BYTES_FOR_LEVEL_BASE bytes"
 NR_KEYS=6000000
 #NR_KEYS=1000000
 
-echo deadline > /sys/class/block/$DEV/queue/scheduler
+echo deadline > /sys/class/block/$DEV_1/queue/scheduler
+echo deadline > /sys/class/block/$DEV_2/queue/scheduler
 
 NR_PROC=$(expr $(nproc) / 2)
 
-rm -rf /tmp/zenfs_$DEV
-./zenfs mkfs --zbd=$DEV --aux_path=/tmp/zenfs_$DEV --finish_threshold=$FUZZ --force
+rm -rf /tmp/zenfs_$DEV_1,$DEV_2
+
+
+./zenfs mkfs --zbd=$DEV_1,$DEV_2 --aux_path=/tmp/zenfs_$DEV_1,$DEV_2 --finish_threshold=$FUZZ --force
 
 echo "Press any key to procede"
 read
 
 ./db_bench \
-    --fs_uri=zenfs://dev:$DEV \
+    --fs_uri=zenfs://dev:$DEV_1,$DEV_2 \
     --key_size=16 \
     --value_size=800 \
     --target_file_size_base=$TARGET_FZ_BASE \
@@ -50,7 +60,7 @@ read
 
 ls -t1 *.log  | head -n 1 | xargs -i mv {} {}.${NR_KEYS}.$(date +%s)
 # ./db_bench \
-#    --fs_uri=zenfs://dev:$DEV \
+#    --fs_uri=zenfs://dev:$DEV_1 \
 #   --benchmarks=mixgraph \
 #   -use_direct_io_for_flush_and_compaction=true \
 #   -use_direct_reads=true \

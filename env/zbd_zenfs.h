@@ -58,7 +58,7 @@
 #ifdef HOT_COLD
 #define ZONE_HOT_COLD_SEP
 #define ZONE_NO_GC_THREAD
-#define ZONE_GC_ENABLE (0)  // is gc enable
+#define ZONE_GC_ENABLE (0)  // is gc disable
 #endif
 
 #ifdef HOT_COLD_GC
@@ -120,8 +120,8 @@ enum ZoneInvalidLevel {
   ZONE_INVALID_MAX,
   NR_ZONE_INVALID_LEVEL,
 };
-
-class ZonedBlockDevice;
+class SubZonedBlockDevice; //physical device
+class ZonedBlockDevice; //logical device on all physical devices
 class ZoneFile;
 class ZoneExtent;
 
@@ -143,10 +143,10 @@ class ZoneMapEntry {
 };
 
 class Zone {
-  ZonedBlockDevice *zbd_;
+  SubZonedBlockDevice *s_zbd_;
 
  public:
-  explicit Zone(ZonedBlockDevice *zbd, struct zbd_zone *z);
+  explicit Zone(SubZonedBlockDevice *s_zbd, struct zbd_zone *z);
 
   uint64_t start_;
   uint64_t capacity_; /* remaining capacity */
@@ -203,8 +203,129 @@ class EmptyZoneCompare {
   }
 };
 
+class SubZonedBlockDevice{
+  private:
+    std::string filename_;
+    uint32_t block_sz_;
+    uint32_t zone_sz_;
+    uint32_t nr_zones_;
+    std::vector<Zone *> io_zones;
+    std::recursive_mutex io_zones_mtx;
+    std::vector<Zone *> meta_zones;
+    int read_f_;
+    int read_direct_f_;
+    int write_f_;
+    time_t start_time_;
+    std::shared_ptr<Logger> logger_;
+    uint32_t finish_threshold_ = 0;
+
+    std::atomic<long> active_io_zones_;
+    std::atomic<long> open_io_zones_;
+    std::condition_variable zone_resources_;
+    std::mutex zone_resources_mtx_; // Protects active/open io zones 
+
+    std::atomic<bool> gc_force_;
+    std::atomic<bool> gc_thread_stop_;
+    std::atomic<long> active_gc_;
+    std::condition_variable gc_thread_cond_;
+    std::condition_variable gc_force_cond_;
+    std::mutex gc_force_mtx_;
+    std::mutex gc_thread_mtx_;
+    std::thread *gc_thread_;
+    std::priority_queue<Zone *, std::vector<Zone *>, VictimZoneCompare>
+      victim_queue_[NR_ZONE_INVALID_LEVEL];
+    uint64_t gc_rate_limiter_;
+    uint64_t reset_rate_limiter_;
+
+    FILE *zone_log_file_;
+    char *gc_buffer_;
+
+    unsigned int max_nr_active_io_zones_;
+    unsigned int max_nr_open_io_zones_;
+
+    Zone *AllocateZoneImpl(Env::WriteLifeTimeHint lifetime, ZoneFile *file,
+                         int *is_empty);
+  public:
+    explicit SubZonedBlockDevice(std::string bdevname,
+                              std::shared_ptr<Logger> logger);
+    virtual ~SubZonedBlockDevice();
+
+    std::mutex *files_mtx_;
+
+    // below 2 member only for zone allocation
+    std::vector<Zone *> occupied_zones_[Env::WLTH_EXTREME + 1];
+    std::priority_queue<Zone *, std::vector<Zone *>, EmptyZoneCompare>
+        empty_zones_queue_;
+
+    IOStatus Open(bool readonly = false);
+
+    Zone *GetIOZone(uint64_t offset);
+
+    Zone *AllocateZone(Env::WriteLifeTimeHint lifetime, ZoneFile *file);
+    Zone *AllocateZone(Env::WriteLifeTimeHint lifetime, ZoneFile *zone_file,
+                      Zone *before_zone);
+    Zone *AllocateMetaZone();
+
+    uint64_t GetFreeSpace();
+    std::string GetFilename();
+    uint32_t GetBlockSize();
+    uint32_t GetEmptyZones();
+
+    void ResetUnusedIOZones();
+    void LogZoneStats();
+    void LogZoneUsage();
+
+    int GetReadFD() { return read_f_; }
+    int GetReadDirectFD() { return read_direct_f_; }
+    int GetWriteFD() { return write_f_; }
+
+    uint32_t GetZoneSize() { return zone_sz_; }
+    uint32_t GetNrZones() { return nr_zones_; }
+    FILE *GetZoneLogFile() { return zone_log_file_; }
+    std::vector<Zone *> GetMetaZones() { return meta_zones; }
+
+    void SetFinishTreshold(uint32_t threshold) { finish_threshold_ = threshold; }
+
+    void NotifyIOZoneFull();
+    void NotifyIOZoneClosed();
+    void NotifyZoneAllocateAvail();
+    void NotifyGarbageCollectionRun();
+
+    long GetOpenIOZone() { return open_io_zones_; }
+    unsigned int GetMaxNrOpenIOZone() { return max_nr_open_io_zones_; }
+    long GetActiveIOZone() { return active_io_zones_; }
+    unsigned int GetMaxNrActiveIOZone() { return max_nr_active_io_zones_; }
+  private:
+    void GarbageCollectionThread(void);
+    uint32_t GarbageCollection(const bool &is_trigger,
+                              const Env::WriteLifeTimeHint lifetime,
+                              const bool &is_force,
+                              const uint64_t &current_empty_space);
+    Slice ReadDataFromExtent(const ZoneMapEntry *item, char *scratch,
+                            ZoneExtent **target_extent);
+    IOStatus CopyDataToFile(const ZoneMapEntry *item, Slice &source,
+                            char *scratch);
+    void WaitUntilZoneOpenAvail();
+    void WaitUntilZoneAllocateAvail();
+    template <class Duration>
+    bool GarbageCollectionSchedule(const Duration &duration);
+    bool ZoneVictimEnableCheck(Zone *z, const bool &is_force);
+    void ZoneSelectVictim(const int &invalid_level, const bool &is_force);
+    ZoneGcState ValidDataCopy(Env::WriteLifeTimeHint lifetime, Zone *z);
+    uint64_t ZoneResetAndFinish(Zone *z, bool reset_condition,
+                                bool finish_condition, Zone **callback_victim);
+
+    int AllocateEmptyZone(unsigned int best_diff, Zone *finish_victim,
+                          Zone **allocated_zone, Env::WriteLifeTimeHint lifetime);
+    int GetAlreadyOpenZone(Zone **allocated_zone, ZoneFile *file,
+                          Env::WriteLifeTimeHint lifetime);
+    std::string GetZoneFileExt(const std::string filename);
+};
+
 class ZonedBlockDevice {
  private:
+  std::vector<SubZonedBlockDevice*> s_zbds_;
+  /*
   std::string filename_;
   uint32_t block_sz_;
   uint32_t zone_sz_;
@@ -222,7 +343,7 @@ class ZonedBlockDevice {
   std::atomic<long> active_io_zones_;
   std::atomic<long> open_io_zones_;
   std::condition_variable zone_resources_;
-  std::mutex zone_resources_mtx_; /* Protects active/open io zones */
+  std::mutex zone_resources_mtx_; // Protects active/open io zones 
 
   std::atomic<bool> gc_force_;
   std::atomic<bool> gc_thread_stop_;
@@ -245,19 +366,19 @@ class ZonedBlockDevice {
 
   Zone *AllocateZoneImpl(Env::WriteLifeTimeHint lifetime, ZoneFile *file,
                          int *is_empty);
-
+  */
  public:
   explicit ZonedBlockDevice(std::string bdevname,
                             std::shared_ptr<Logger> logger);
   virtual ~ZonedBlockDevice();
-
+  //need to modify
   std::mutex *files_mtx_;
-
+  /*
   // below 2 member only for zone allocation
   std::vector<Zone *> occupied_zones_[Env::WLTH_EXTREME + 1];
   std::priority_queue<Zone *, std::vector<Zone *>, EmptyZoneCompare>
       empty_zones_queue_;
-
+  */
   IOStatus Open(bool readonly = false);
 
   Zone *GetIOZone(uint64_t offset);
@@ -275,29 +396,30 @@ class ZonedBlockDevice {
   void ResetUnusedIOZones();
   void LogZoneStats();
   void LogZoneUsage();
+  //need to modify/////////////////////////////////////////////////////////////////////
+  int GetReadFD() { return s_zbds_[0]->GetReadFD(); }
+  int GetReadDirectFD() { return s_zbds_[0]->GetReadDirectFD(); }
+  int GetWriteFD() { return s_zbds_[0]->GetWriteFD(); }
 
-  int GetReadFD() { return read_f_; }
-  int GetReadDirectFD() { return read_direct_f_; }
-  int GetWriteFD() { return write_f_; }
+  uint32_t GetZoneSize() { return s_zbds_[0]->GetZoneSize(); }
+  uint32_t GetNrZones() { return s_zbds_[0]->GetNrZones(); }
+  FILE *GetZoneLogFile() { return s_zbds_[0]->GetZoneLogFile(); }
+  std::vector<Zone *> GetMetaZones() { return s_zbds_[0]->GetMetaZones(); }
 
-  uint32_t GetZoneSize() { return zone_sz_; }
-  uint32_t GetNrZones() { return nr_zones_; }
-  FILE *GetZoneLogFile() { return zone_log_file_; }
-  std::vector<Zone *> GetMetaZones() { return meta_zones; }
-
-  void SetFinishTreshold(uint32_t threshold) { finish_threshold_ = threshold; }
-
+  void SetFinishTreshold(uint32_t threshold) { s_zbds_[0]->SetFinishTreshold(threshold); }
+  /////////////////////////////////////////////////////////////////////////////////////
   void NotifyIOZoneFull();
   void NotifyIOZoneClosed();
   void NotifyZoneAllocateAvail();
   void NotifyGarbageCollectionRun();
-
-  long GetOpenIOZone() { return open_io_zones_; }
-  unsigned int GetMaxNrOpenIOZone() { return max_nr_open_io_zones_; }
-  long GetActiveIOZone() { return active_io_zones_; }
-  unsigned int GetMaxNrActiveIOZone() { return max_nr_active_io_zones_; }
-
+  //need to modify////////////////////////////////////////////////////////////
+  long GetOpenIOZone() { return s_zbds_[0]->GetOpenIOZone(); }
+  unsigned int GetMaxNrOpenIOZone() { return s_zbds_[0]->GetMaxNrOpenIOZone(); }
+  long GetActiveIOZone() { return s_zbds_[0]->GetActiveIOZone(); }
+  unsigned int GetMaxNrActiveIOZone() { return s_zbds_[0]->GetMaxNrActiveIOZone(); }
+  //////////////////////////////////////////////////////////////////////////
  private:
+ /*
   void GarbageCollectionThread(void);
   uint32_t GarbageCollection(const bool &is_trigger,
                              const Env::WriteLifeTimeHint lifetime,
@@ -322,8 +444,7 @@ class ZonedBlockDevice {
   int GetAlreadyOpenZone(Zone **allocated_zone, ZoneFile *file,
                          Env::WriteLifeTimeHint lifetime);
   std::string GetZoneFileExt(const std::string filename);
+  */
 };
-
 }  // namespace ROCKSDB_NAMESPACE
-
 #endif  // !defined(ROCKSDB_LITE) && defined(OS_LINUX) && defined(LIBZBD)
