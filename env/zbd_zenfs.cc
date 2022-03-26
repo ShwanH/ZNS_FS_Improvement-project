@@ -1367,7 +1367,7 @@ Zone *SubZonedBlockDevice::GetIOZone(uint64_t offset) {
 
 SubZonedBlockDevice::SubZonedBlockDevice(std::string bdevname,
                                    std::shared_ptr<Logger> logger)
-    : filename_("/dev/" + bdevname), logger_(logger) {
+    : bdevname_(bdevname),filename_("/dev/" + bdevname), logger_(logger) {
   Info(logger_, "New Zoned Block Device: %s", filename_.c_str());
   zone_log_file_ = nullptr;
   files_mtx_ = nullptr;
@@ -1422,15 +1422,15 @@ IOStatus SubZonedBlockDevice::Open(bool readonly) {
   nr_zones_ = info.nr_zones;
 
 #if defined(ORIGINAL)
-  sstr <<filename_<< "_zone_e" << ZONE_RESET_TRIGGER << "_original.log";
+  sstr <<bdevname_<< "_zone_e" << ZONE_RESET_TRIGGER << "_original.log";
 #elif defined(ORIGINAL_GC)
-  sstr <<filename_<< "_zone_e" << ZONE_RESET_TRIGGER << "_original_gc.log";
+  sstr <<bdevname_<< "_zone_e" << ZONE_RESET_TRIGGER << "_original_gc.log";
 #elif defined(HOT_COLD)
-  sstr <<filename_<< "_zone_e" << ZONE_RESET_TRIGGER << "_hot_cold.log";
+  sstr <<bdevname_<< "_zone_e" << ZONE_RESET_TRIGGER << "_hot_cold.log";
 #elif defined(HOT_COLD_GC)
-  sstr <<filename_<< "_zone_e" << ZONE_RESET_TRIGGER << "_hot_cold_gc.log";
+  sstr <<bdevname_<< "_zone_e" << ZONE_RESET_TRIGGER << "_hot_cold_gc.log";
 #else
-  sstr <<filename_<< "_zone_e" << ZONE_RESET_TRIGGER << "_unknown.log";
+  sstr <<bdevname_<< "_zone_e" << ZONE_RESET_TRIGGER << "_unknown.log";
 #endif
 
 #ifdef ZONE_CUSTOM_DEBUG

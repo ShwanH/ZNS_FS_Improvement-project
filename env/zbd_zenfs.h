@@ -205,6 +205,7 @@ class EmptyZoneCompare {
 
 class SubZonedBlockDevice{
   private:
+    std::string bdevname_;
     std::string filename_;
     uint32_t block_sz_;
     uint32_t zone_sz_;
