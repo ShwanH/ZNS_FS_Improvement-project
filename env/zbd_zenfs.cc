@@ -1422,15 +1422,15 @@ IOStatus SubZonedBlockDevice::Open(bool readonly) {
   nr_zones_ = info.nr_zones;
 
 #if defined(ORIGINAL)
-  sstr <<filename_<< " zone_e" << ZONE_RESET_TRIGGER << "_original.log";
+  sstr <<filename_<< "_zone_e" << ZONE_RESET_TRIGGER << "_original.log";
 #elif defined(ORIGINAL_GC)
-  sstr <<filename_<< " zone_e" << ZONE_RESET_TRIGGER << "_original_gc.log";
+  sstr <<filename_<< "_zone_e" << ZONE_RESET_TRIGGER << "_original_gc.log";
 #elif defined(HOT_COLD)
-  sstr <<filename_<< " zone_e" << ZONE_RESET_TRIGGER << "_hot_cold.log";
+  sstr <<filename_<< "_zone_e" << ZONE_RESET_TRIGGER << "_hot_cold.log";
 #elif defined(HOT_COLD_GC)
-  sstr <<filename_<< " zone_e" << ZONE_RESET_TRIGGER << "_hot_cold_gc.log";
+  sstr <<filename_<< "_zone_e" << ZONE_RESET_TRIGGER << "_hot_cold_gc.log";
 #else
-  sstr <<filename_<< " zone_e" << ZONE_RESET_TRIGGER << "_unknown.log";
+  sstr <<filename_<< "_zone_e" << ZONE_RESET_TRIGGER << "_unknown.log";
 #endif
 
 #ifdef ZONE_CUSTOM_DEBUG
