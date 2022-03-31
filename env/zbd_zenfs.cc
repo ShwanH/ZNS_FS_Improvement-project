@@ -1359,6 +1359,12 @@ uint32_t ZonedBlockDevice::GetBlockSize() { return block_sz_; }
 std::string ZonedBlockDevice::GetFilename() { return s_zbds_[0]->GetFilename(); }
 uint32_t ZonedBlockDevice::GetBlockSize() { return s_zbds_[0]->GetBlockSize(); }
 
+void ZoneBlockDevice::ShareFileMtx(){
+  for(auto s_zbd:s_zbds_){
+    s_zbd->files_mtx_ = this->files_mtx_;
+  }
+}
+
 Zone *SubZonedBlockDevice::GetIOZone(uint64_t offset) {
   for (const auto z : io_zones)
     if (z->start_ <= offset && offset < (z->start_ + zone_sz_)) return z;

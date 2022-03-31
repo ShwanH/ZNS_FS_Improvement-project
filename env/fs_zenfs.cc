@@ -921,8 +921,9 @@ Status NewZenFS(FileSystem** fs, const std::string& bdevname) {
     delete zenFS;
     return s;
   }
-
+  
   zbd->files_mtx_ = &zenFS->files_mtx_;
+  zbd->ShareFileMtx();
 
   *fs = zenFS;
   return Status::OK();

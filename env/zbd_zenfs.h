@@ -397,6 +397,7 @@ class ZonedBlockDevice {
   void ResetUnusedIOZones();
   void LogZoneStats();
   void LogZoneUsage();
+  void ShareFileMtx();
   //need to modify/////////////////////////////////////////////////////////////////////
   int GetReadFD() { return s_zbds_[0]->GetReadFD(); }
   int GetReadDirectFD() { return s_zbds_[0]->GetReadDirectFD(); }
