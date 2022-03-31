@@ -409,10 +409,12 @@ class ZonedBlockDevice {
 
   void SetFinishTreshold(uint32_t threshold) { s_zbds_[0]->SetFinishTreshold(threshold); }
   /////////////////////////////////////////////////////////////////////////////////////
+  /*
   void NotifyIOZoneFull();
   void NotifyIOZoneClosed();
   void NotifyZoneAllocateAvail();
   void NotifyGarbageCollectionRun();
+  */
   //need to modify////////////////////////////////////////////////////////////
   long GetOpenIOZone() { return s_zbds_[0]->GetOpenIOZone(); }
   unsigned int GetMaxNrOpenIOZone() { return s_zbds_[0]->GetMaxNrOpenIOZone(); }

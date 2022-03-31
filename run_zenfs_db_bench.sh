@@ -57,7 +57,7 @@ read
     --max_background_jobs=$NR_PROC \
     --num=$NR_KEYS \
     --benchmarks=fillseq,overwrite
-
+#need to modify for multi devices
 ls -t1 *.log  | head -n 1 | xargs -i mv {} {}.${NR_KEYS}.$(date +%s)
 # ./db_bench \
 #    --fs_uri=zenfs://dev:$DEV_1 \
