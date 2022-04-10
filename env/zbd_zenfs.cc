@@ -367,8 +367,15 @@ ZonedBlockDevice::ZonedBlockDevice(std::string bdevname,std::shared_ptr<Logger> 
   std::string s_bdevname;
   std::stringstream sstream(bdevname);
   while(getline(sstream,s_bdevname,',')){
-    s_zbds_.push_back(new SubZonedBlockDevice(s_bdevname,logger));
+    SubZonedBlockDevice* s_zbd = new SubZonedBlockDevice(s_bdevname,logger); 
+    s_zbds_.push_back(s_zbd);
+  #ifdef INDEPENDENT_GC_THREAD
+    zonefile_mtxs_.insert({s_zbd,&(s_zbd->zonefile_mtx_)});
+  #endif
   }
+#ifndef INDEPENDENT_GC_THREAD
+  files_mtx_ = nullptr;
+#endif
 }
 
 /*
@@ -1359,10 +1366,43 @@ uint32_t ZonedBlockDevice::GetBlockSize() { return block_sz_; }
 std::string ZonedBlockDevice::GetFilename() { return s_zbds_[0]->GetFilename(); }
 uint32_t ZonedBlockDevice::GetBlockSize() { return s_zbds_[0]->GetBlockSize(); }
 
-void ZoneBlockDevice::ShareFileMtx(){
+void ZonedBlockDevice::ShareFileMtx(){
+#ifndef INDEPENDENT_GC_THREAD
   for(auto s_zbd:s_zbds_){
     s_zbd->files_mtx_ = this->files_mtx_;
   }
+#endif
+}
+
+void ZonedBlockDevice::LockMutex(){
+#ifdef INDEPENDENT_GC_THREAD  
+  std::map<SubZonedBlockDevice*,std::mutex*>::iterator it; 
+  for(it = zonefile_mtxs_.begin(); it != zonefile_mtxs_.end(); it++){
+    it->second->lock();
+  }
+#endif   
+}
+
+void ZonedBlockDevice::UnlockMutex(){
+#ifdef INDEPENDENT_GC_THREAD  
+  std::map<SubZonedBlockDevice*,std::mutex*>::iterator it; 
+  for(it = zonefile_mtxs_.begin(); it != zonefile_mtxs_.end(); it++){
+    it->second->unlock();
+  }
+#endif
+}
+
+std::vector<std::mutex*> *ZonedBlockDevice::FindMtxsOnFile(ZoneFile* zonefile){
+  assert(nullptr != zonefile);
+  std::vector<std::mutex*> *mtxs_on_file = new std::vector<std::mutex*>;
+#ifdef INDEPENDENT_GC_THREAD
+  for(auto extent:zonefile->GetExtents()){
+    mtxs_on_file->push_back(&(extent->zone_->GetSZBD()->zonefile_mtx_));
+  }
+  std::sort(mtxs_on_file->begin(),mtxs_on_file->end());
+  mtxs_on_file->erase(std::unique(mtxs_on_file->begin(),mtxs_on_file->end()),mtxs_on_file->end());
+#endif
+  return mtxs_on_file;
 }
 
 Zone *SubZonedBlockDevice::GetIOZone(uint64_t offset) {
@@ -1376,7 +1416,9 @@ SubZonedBlockDevice::SubZonedBlockDevice(std::string bdevname,
     : bdevname_(bdevname),filename_("/dev/" + bdevname), logger_(logger) {
   Info(logger_, "New Zoned Block Device: %s", filename_.c_str());
   zone_log_file_ = nullptr;
+#ifndef INDEPENDENT_GC_THREAD
   files_mtx_ = nullptr;
+#endif
   gc_thread_ = nullptr;
   gc_thread_stop_ = false;
   gc_force_ = false;
@@ -1565,11 +1607,11 @@ uint32_t SubZonedBlockDevice::GarbageCollection(
   uint64_t processed_reset = 0;
   uint64_t empty_zones_for_gc = 0;
   Zone *finish_victim = nullptr;
-
+#ifndef INDEPENDENT_GC_THREAD
   if (files_mtx_ == nullptr) {  // This for zenfs
     return GetEmptyZones();
   }
-
+#endif
 #ifdef ZONE_CUSTOM_DEBUG
   fprintf(zone_log_file_, "%-10ld%-8s%-8u%-8u\n",
           (long int)((double)clock() / CLOCKS_PER_SEC * 1000), "REMAIN",
@@ -1620,16 +1662,22 @@ uint32_t SubZonedBlockDevice::GarbageCollection(
   }
 
   empty_zones_for_gc = GetFreeSpace();
-
+#ifdef INDEPENDENT_GC_THREAD
+  const bool is_gc =
+      ZONE_GC_ENABLE && (empty_zones_for_gc * 100 <= total_space * ZONE_GC_WATERMARK);
+#else
   const bool is_gc =
       ZONE_GC_ENABLE && (files_mtx_ != nullptr) &&
       (empty_zones_for_gc * 100 <= total_space * ZONE_GC_WATERMARK);
-
+#endif
   if (!is_gc) {
     return GetEmptyZones();
   }
-
+#ifdef INDEPENDENT_GC_THREAD
+  zonefile_mtx_.lock();
+#else
   files_mtx_->lock();
+#endif
   int invalid_level = ZONE_INVALID_MAX;
   int valid_level = ZONE_INVALID_LOW;
   while (invalid_level >= ZONE_INVALID_LOW) {
@@ -1674,7 +1722,11 @@ uint32_t SubZonedBlockDevice::GarbageCollection(
     }
     invalid_level--;
   }  // invalid level loop
+#ifdef INDEPENDENT_GC_THREAD
+  zonefile_mtx_.unlock();
+#else
   files_mtx_->unlock();
+#endif
 
   return GetEmptyZones();
 }

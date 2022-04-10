@@ -226,6 +226,7 @@ class ZenFS : public FileSystemWrapper {
   virtual ~ZenFS();
 
   std::mutex files_mtx_;
+  
   Status Mount();
   Status MkFS(std::string aux_fs_path, uint32_t finish_threshold);
 

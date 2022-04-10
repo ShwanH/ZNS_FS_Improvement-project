@@ -41,8 +41,11 @@
 
 // #define ORIGINAL
 // #define ORIGINAL_GC
-#define HOT_COLD
-// #define HOT_COLD_GC
+// #define HOT_COLD
+#define HOT_COLD_GC
+
+//#define DEPENDENT_GC_THREAD
+#define INDEPENDENT_GC_THREAD
 
 #ifdef ORIGINAL
 #define ZONE_NO_GC_THREAD
@@ -182,6 +185,7 @@ class Zone {
   void PrintZoneFiles(FILE *fp);
 
   void CloseWR(); /* Done writing */
+  SubZonedBlockDevice* GetSZBD(){return s_zbd_;}
 };
 
 class VictimZoneCompare {
@@ -251,7 +255,11 @@ class SubZonedBlockDevice{
                               std::shared_ptr<Logger> logger);
     virtual ~SubZonedBlockDevice();
 
+  #if defined(INDEPENDENT_GC_THREAD)
+    std::mutex zonefile_mtx_;
+  #else
     std::mutex *files_mtx_;
+  #endif
 
     // below 2 member only for zone allocation
     std::vector<Zone *> occupied_zones_[Env::WLTH_EXTREME + 1];
@@ -372,14 +380,22 @@ class ZonedBlockDevice {
   explicit ZonedBlockDevice(std::string bdevname,
                             std::shared_ptr<Logger> logger);
   virtual ~ZonedBlockDevice();
-  //need to modify
+  
+#if defined(INDEPENDENT_GC_THREAD)
+  std::map<SubZonedBlockDevice*,std::mutex*> zonefile_mtxs_;
+#else
   std::mutex *files_mtx_;
+#endif
+
   /*
   // below 2 member only for zone allocation
   std::vector<Zone *> occupied_zones_[Env::WLTH_EXTREME + 1];
   std::priority_queue<Zone *, std::vector<Zone *>, EmptyZoneCompare>
       empty_zones_queue_;
   */
+  void LockMutex();
+  void UnlockMutex();
+  std::vector<std::mutex*> *FindMtxsOnFile(ZoneFile *zonefile); 
   IOStatus Open(bool readonly = false);
 
   Zone *GetIOZone(uint64_t offset);
