@@ -112,7 +112,7 @@ Status ZoneFile::DecodeFrom(Slice* input) {
           delete extent;
           return s;
         }
-        extent->zone_ = zbd_->GetIOZone(extent->start_);
+        extent->zone_ = s_zbd_->GetIOZone(extent->start_);
         if (!extent->zone_)
           return Status::Corruption("ZoneFile", "Invalid zone extent");
         extent->zone_->used_capacity_ += extent->length_;
@@ -158,7 +158,9 @@ ZoneFile::ZoneFile(ZonedBlockDevice* zbd, std::string filename,
       fileSize(0),
       filename_(filename),
       file_id_(file_id),
-      nr_synced_extents_(0) {}
+      nr_synced_extents_(0) {
+        s_zbd_ = zbd->AllocateSubZBD();
+      }
 
 std::string ZoneFile::GetFilename() { return filename_; }
 
@@ -172,15 +174,15 @@ ZoneFile::~ZoneFile() {
     Zone* zone = (*e)->zone_;
 
 #ifdef ZONE_CUSTOM_DEBUG
-    if (zbd_->GetZoneLogFile()) {
+    if (s_zbd_->GetZoneLogFile()) {
       long cap = zone->used_capacity_;
-      fprintf(zbd_->GetZoneLogFile(),
+      fprintf(s_zbd_->GetZoneLogFile(),
               "%-10ld%-8s%-8s%-40s%-8u%-8lu%-12ld%-12u\n",
               (long int)((double)clock() / CLOCKS_PER_SEC * 1000), "FILE",
               "PEND", GetFilename().c_str(), GetWriteLifeTimeHint(),
               zone->GetZoneNr(), cap, (*e)->length_);
     }
-    fflush(zbd_->GetZoneLogFile());
+    fflush(s_zbd_->GetZoneLogFile());
 #endif
 
     assert(zone && zone->used_capacity_ >= (*e)->length_);
@@ -232,8 +234,8 @@ ZoneExtent* ZoneFile::GetExtent(uint64_t extent_start) {
 
 IOStatus ZoneFile::PositionedRead(uint64_t offset, size_t n, Slice* result,
                                   char* scratch, bool direct) {
-  int f = zbd_->GetReadFD();
-  int f_direct = zbd_->GetReadDirectFD();
+  int f = s_zbd_->GetReadFD();
+  int f_direct = s_zbd_->GetReadDirectFD();
   char* ptr;
   uint64_t r_off;
   size_t r_sz;
@@ -270,7 +272,7 @@ IOStatus ZoneFile::PositionedRead(uint64_t offset, size_t n, Slice* result,
 
     if ((pread_sz + r_off) > extent_end) pread_sz = extent_end - r_off;
 
-    bool aligned = (pread_sz % zbd_->GetBlockSize() == 0);
+    bool aligned = (pread_sz % s_zbd_->GetBlockSize() == 0);
 
     if (direct && aligned) {
       r = pread(f_direct, ptr, pread_sz, r_off);
@@ -299,7 +301,7 @@ IOStatus ZoneFile::PositionedRead(uint64_t offset, size_t n, Slice* result,
       }
       r_off = extent->start_;
       extent_end = extent->start_ + extent->length_;
-      assert(((size_t)r_off % zbd_->GetBlockSize()) == 0);
+      assert(((size_t)r_off % s_zbd_->GetBlockSize()) == 0);
     }
   }
 
@@ -378,7 +380,7 @@ IOStatus ZoneFile::Append(void* data, int data_size, int valid_size) {
 #ifdef ZONE_TIME_CHECK
     auto start = std::chrono::system_clock::now();
 #endif
-    active_zone_ = zbd_->AllocateZone(lifetime_, this, NULL);
+    active_zone_ = s_zbd_->AllocateZone(lifetime_, this, NULL);
 #ifdef ZONE_TIME_CHECK
     auto end = std::chrono::system_clock::now();
     fs << "new\t"
@@ -395,7 +397,7 @@ IOStatus ZoneFile::Append(void* data, int data_size, int valid_size) {
 
   while (left) {
     if (active_zone_->capacity_ == 0) {
-      if (((fileSize - extent_filepos_) % zbd_->GetBlockSize()) != 0) {
+      if (((fileSize - extent_filepos_) % s_zbd_->GetBlockSize()) != 0) {
         fprintf(stderr, "%s: %lu %lu\n", filename_.c_str(), fileSize,
                 extent_filepos_);
       }
@@ -405,7 +407,7 @@ IOStatus ZoneFile::Append(void* data, int data_size, int valid_size) {
 #ifdef ZONE_TIME_CHECK
       auto start = std::chrono::system_clock::now();
 #endif
-      active_zone_ = zbd_->AllocateZone(lifetime_, this, active_zone_);
+      active_zone_ = s_zbd_->AllocateZone(lifetime_, this, active_zone_);
 #ifdef ZONE_TIME_CHECK
       auto end = std::chrono::system_clock::now();
       fs << "exh\t"
@@ -424,11 +426,11 @@ IOStatus ZoneFile::Append(void* data, int data_size, int valid_size) {
     if (wr_size > active_zone_->capacity_) wr_size = active_zone_->capacity_;
 
 #ifdef ZONE_CUSTOM_DEBUG
-    fprintf(zbd_->GetZoneLogFile(), "%-10ld%-8s%-8lu%-8lu%-45s%-10u%-10lu\n",
+    fprintf(s_zbd_->GetZoneLogFile(), "%-10ld%-8s%-8lu%-8lu%-45s%-10u%-10lu\n",
             (long int)((double)clock() / CLOCKS_PER_SEC * 1000), "WRITE",
             (unsigned long)0, active_zone_->GetZoneNr(), filename_.c_str(),
             wr_size, fileSize);
-    fflush(zbd_->GetZoneLogFile());
+    fflush(s_zbd_->GetZoneLogFile());
 #endif
     s = active_zone_->Append((char*)data + offset, wr_size);
     if (!s.ok()) {
@@ -449,14 +451,14 @@ IOStatus ZoneFile::SetWriteLifeTimeHint(Env::WriteLifeTimeHint lifetime) {
   return IOStatus::OK();
 }
 
-ZonedWritableFile::ZonedWritableFile(ZonedBlockDevice* zbd, bool _buffered,
+ZonedWritableFile::ZonedWritableFile(ZonedBlockDevice* /*zbd*/, bool _buffered,
                                      ZoneFile* zoneFile,
                                      MetadataWriter* metadata_writer) {
   wp = zoneFile->GetFileSize();
   assert(wp == 0);
 
   buffered = _buffered;
-  block_sz = zbd->GetBlockSize();
+  block_sz = zoneFile->GetBlockSize();
   buffer_sz = block_sz * 256;
   buffer_pos = 0;
 
@@ -692,7 +694,7 @@ size_t ZoneFile::GetUniqueId(char* id, size_t max_size) {
   }
 
   struct stat buf;
-  int fd = zbd_->GetReadFD();
+  int fd = s_zbd_->GetReadFD();
   int result = fstat(fd, &buf);
   if (result == -1) {
     return 0;

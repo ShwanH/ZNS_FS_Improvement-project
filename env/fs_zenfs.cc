@@ -302,30 +302,17 @@ IOStatus ZenFS::SyncFileMetadata(ZoneFile* zoneFile) {
   std::string output;
 
   IOStatus s;
+  std::mutex *mtx_be_locked = zbd_->GetMtxOnFile(zoneFile);
+  mtx_be_locked->lock();
 
-#ifdef INDEPENDENT_GC_THREAD
-  std::vector<std::mutex*> *mtxs_be_locked = zbd_->FindMtxsOnFile(zoneFile);
-  for(auto mtx:*mtxs_be_locked){
-    mtx->lock();
-  }
-#else
-  files_mtx_.lock();
-#endif
   PutFixed32(&output, kFileUpdate);
   zoneFile->EncodeUpdateTo(&fileRecord);
   PutLengthPrefixedSlice(&output, Slice(fileRecord));
 
   s = PersistRecord(output);
   if (s.ok()) zoneFile->MetadataSynced();
-#ifdef INDEPENDENT_GC_THREAD
-  for(auto mtx:*mtxs_be_locked){
-    mtx->unlock();
-  }
-  delete mtxs_be_locked;
-#else
-  files_mtx_.unlock();
-#endif
 
+  mtx_be_locked->unlock();
   return s;
 }
 
@@ -354,11 +341,9 @@ IOStatus ZenFS::DeleteFile(std::string fname) {
   files_mtx_.lock();
   zoneFile = GetFileInternal(fname);
   if (zoneFile != nullptr) {
-  #ifdef INDEPENDENT_GC_THREAD
-    std::vector<std::mutex*> *mtxs_be_locked = zbd_->FindMtxsOnFile(zoneFile);
-    for(auto mtx:*mtxs_be_locked){
-      mtx->lock();
-    }
+  #ifdef INDEPENDENT_GC_THREAD  
+    std::mutex *mtx_be_locked = zbd_->GetMtxOnFile(zoneFile);
+    mtx_be_locked->lock();
   #endif  
     std::string record;
 
@@ -375,12 +360,9 @@ IOStatus ZenFS::DeleteFile(std::string fname) {
 #endif
       delete (zoneFile);
     }
-  #ifdef INDEPENDENT_GC_THREAD
-    for(auto mtx:*mtxs_be_locked){
-      mtx->unlock();
-    }
-    delete mtxs_be_locked;
-  #endif  
+  #ifdef INDEPENDENT_GC_THREAD  
+    mtx_be_locked->unlock();
+  #endif
   }
   files_mtx_.unlock();
   return s;
@@ -535,17 +517,14 @@ IOStatus ZenFS::GetFileSize(const std::string& f, const IOOptions& /*options*/,
   if (files_.find(f) != files_.end()) {
     zoneFile = files_[f];
   #ifdef INDEPENDENT_GC_THREAD
-    std::vector<std::mutex*> *mtxs_be_locked = zbd_->FindMtxsOnFile(zoneFile);
-    for(auto mtx:*mtxs_be_locked){
-      mtx->lock();
-    }
+    std::mutex *mtx_be_locked = zbd_->GetMtxOnFile(zoneFile);
+    mtx_be_locked->lock();
   #endif
+
     *size = zoneFile->GetFileSize();
+
   #ifdef INDEPENDENT_GC_THREAD
-    for(auto mtx:*mtxs_be_locked){
-      mtx->unlock();
-    }
-    delete mtxs_be_locked;
+    mtx_be_locked->unlock();
   #endif  
   } else {
     s = IOStatus::IOError("file does not exist\n");
@@ -568,19 +547,14 @@ IOStatus ZenFS::RenameFile(const std::string& f, const std::string& t,
     if (s.ok()) {
       files_mtx_.lock();
     #ifdef INDEPENDENT_GC_THREAD
-      std::vector<std::mutex*> *mtxs_be_locked = zbd_->FindMtxsOnFile(zoneFile);
-      for(auto mtx:*mtxs_be_locked){
-        mtx->lock();
-      }
+      std::mutex *mtx_be_locked = zbd_->GetMtxOnFile(zoneFile);
+      mtx_be_locked->lock();
     #endif
       files_.erase(f);
       zoneFile->Rename(t);
       files_.insert(std::make_pair(t, zoneFile));
     #ifdef INDEPENDENT_GC_THREAD
-      for(auto mtx:*mtxs_be_locked){
-        mtx->unlock();
-      }
-      delete mtxs_be_locked;
+      mtx_be_locked->unlock();
     #endif  
       files_mtx_.unlock();
 

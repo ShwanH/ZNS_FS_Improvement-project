@@ -49,6 +49,7 @@ class ZoneExtent {
 class ZoneFile {
  protected:
   ZonedBlockDevice* zbd_;
+  SubZonedBlockDevice* s_zbd_;
   std::vector<ZoneExtent*> extents_;
   Zone* active_zone_;
   uint64_t extent_start_;
@@ -85,7 +86,7 @@ class ZoneFile {
     extent_filepos_ = extent_filepos;
   }
   uint64_t GetExtentFilePos() { return extent_filepos_; }
-  uint32_t GetBlockSize() { return zbd_->GetBlockSize(); }
+  uint32_t GetBlockSize() { return s_zbd_->GetBlockSize(); }
   std::vector<ZoneExtent*> GetExtents() { return extents_; }
   Env::WriteLifeTimeHint GetWriteLifeTimeHint() { return lifetime_; }
 
@@ -109,6 +110,7 @@ class ZoneFile {
 
   uint64_t GetID() { return file_id_; }
   size_t GetUniqueId(char* id, size_t max_size);
+  SubZonedBlockDevice* GetSubZBD(){return s_zbd_;}
 };
 
 class ZonedWritableFile : public FSWritableFile {

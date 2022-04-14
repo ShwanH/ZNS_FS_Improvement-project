@@ -33,7 +33,7 @@
 #include <thread>
 #include <utility>
 #include <vector>
-
+#include <map>
 #include "rocksdb/env.h"
 #include "rocksdb/io_status.h"
 
@@ -46,6 +46,9 @@
 
 //#define DEPENDENT_GC_THREAD
 #define INDEPENDENT_GC_THREAD
+
+#define ORIGINAL_IO
+//#define EQUAL_IO
 
 #ifdef ORIGINAL
 #define ZONE_NO_GC_THREAD
@@ -270,7 +273,6 @@ class SubZonedBlockDevice{
 
     Zone *GetIOZone(uint64_t offset);
 
-    Zone *AllocateZone(Env::WriteLifeTimeHint lifetime, ZoneFile *file);
     Zone *AllocateZone(Env::WriteLifeTimeHint lifetime, ZoneFile *zone_file,
                       Zone *before_zone);
     Zone *AllocateMetaZone();
@@ -329,13 +331,15 @@ class SubZonedBlockDevice{
     int GetAlreadyOpenZone(Zone **allocated_zone, ZoneFile *file,
                           Env::WriteLifeTimeHint lifetime);
     std::string GetZoneFileExt(const std::string filename);
+    Zone *AllocateZone(Env::WriteLifeTimeHint lifetime, ZoneFile *file);
 };
 
 class ZonedBlockDevice {
  private:
   std::vector<SubZonedBlockDevice*> s_zbds_;
-  /*
+  unsigned int io_num_; // Turn number of S_ZBD's I/O when original ver.
   std::string filename_;
+  /*
   uint32_t block_sz_;
   uint32_t zone_sz_;
   uint32_t nr_zones_;
@@ -395,12 +399,13 @@ class ZonedBlockDevice {
   */
   void LockMutex();
   void UnlockMutex();
-  std::vector<std::mutex*> *FindMtxsOnFile(ZoneFile *zonefile); 
+  std::mutex *GetMtxOnFile(ZoneFile *zonefile); 
+  SubZonedBlockDevice* AllocateSubZBD();
   IOStatus Open(bool readonly = false);
 
   Zone *GetIOZone(uint64_t offset);
 
-  Zone *AllocateZone(Env::WriteLifeTimeHint lifetime, ZoneFile *file);
+  
   Zone *AllocateZone(Env::WriteLifeTimeHint lifetime, ZoneFile *zone_file,
                      Zone *before_zone);
   Zone *AllocateMetaZone();
@@ -408,7 +413,7 @@ class ZonedBlockDevice {
   uint64_t GetFreeSpace();
   std::string GetFilename();
   uint32_t GetBlockSize();
-  uint32_t GetEmptyZones();
+  //uint32_t GetEmptyZones();
 
   void ResetUnusedIOZones();
   void LogZoneStats();
@@ -417,7 +422,7 @@ class ZonedBlockDevice {
   //need to modify/////////////////////////////////////////////////////////////////////
   int GetReadFD() { return s_zbds_[0]->GetReadFD(); }
   int GetReadDirectFD() { return s_zbds_[0]->GetReadDirectFD(); }
-  int GetWriteFD() { return s_zbds_[0]->GetWriteFD(); }
+  //int GetWriteFD() { return s_zbds_[0]->GetWriteFD(); }
 
   uint32_t GetZoneSize() { return s_zbds_[0]->GetZoneSize(); }
   uint32_t GetNrZones() { return s_zbds_[0]->GetNrZones(); }
@@ -432,12 +437,12 @@ class ZonedBlockDevice {
   void NotifyZoneAllocateAvail();
   void NotifyGarbageCollectionRun();
   */
-  //need to modify////////////////////////////////////////////////////////////
+  /*
   long GetOpenIOZone() { return s_zbds_[0]->GetOpenIOZone(); }
   unsigned int GetMaxNrOpenIOZone() { return s_zbds_[0]->GetMaxNrOpenIOZone(); }
   long GetActiveIOZone() { return s_zbds_[0]->GetActiveIOZone(); }
   unsigned int GetMaxNrActiveIOZone() { return s_zbds_[0]->GetMaxNrActiveIOZone(); }
-  //////////////////////////////////////////////////////////////////////////
+  */
  private:
  /*
   void GarbageCollectionThread(void);
@@ -465,6 +470,8 @@ class ZonedBlockDevice {
                          Env::WriteLifeTimeHint lifetime);
   std::string GetZoneFileExt(const std::string filename);
   */
+ //Zone *AllocateZone(Env::WriteLifeTimeHint lifetime, ZoneFile *file);
+ unsigned int GetIONum();
 };
 }  // namespace ROCKSDB_NAMESPACE
 #endif  // !defined(ROCKSDB_LITE) && defined(OS_LINUX) && defined(LIBZBD)

@@ -363,7 +363,7 @@ ZonedBlockDevice::ZonedBlockDevice(std::string bdevname,
 };
 */
 
-ZonedBlockDevice::ZonedBlockDevice(std::string bdevname,std::shared_ptr<Logger> logger){
+ZonedBlockDevice::ZonedBlockDevice(std::string bdevname,std::shared_ptr<Logger> logger):filename_("/dev/"+bdevname){
   std::string s_bdevname;
   std::stringstream sstream(bdevname);
   while(getline(sstream,s_bdevname,',')){
@@ -376,6 +376,7 @@ ZonedBlockDevice::ZonedBlockDevice(std::string bdevname,std::shared_ptr<Logger> 
 #ifndef INDEPENDENT_GC_THREAD
   files_mtx_ = nullptr;
 #endif
+  io_num_ = 0;
 }
 
 /*
@@ -737,17 +738,21 @@ uint64_t ZonedBlockDevice::GetFreeSpace() {
   return free;
 }
 */
-//need to modify
 uint64_t ZonedBlockDevice::GetFreeSpace() {
-  return s_zbds_[0]->GetFreeSpace();
+  uint64_t ret = 0;
+  for(auto s_zbd:s_zbds_){
+    ret += s_zbd->GetFreeSpace();
+  }
+  return ret;
 }
 /*
 uint32_t ZonedBlockDevice::GetEmptyZones() { return empty_zones_queue_.size(); }
 */
-//need to modify
+/*
 uint32_t ZonedBlockDevice::GetEmptyZones() {
   return s_zbds_[0]->GetEmptyZones();
 }
+*/
 /*
 void ZonedBlockDevice::LogZoneStats() {
   uint64_t used_capacity = 0;
@@ -1315,10 +1320,11 @@ Zone *ZonedBlockDevice::AllocateZone(Env::WriteLifeTimeHint lifetime,
   return allocated_zone;
 }
 */
-//need to modify
+/*
 Zone *ZonedBlockDevice::AllocateZone(Env::WriteLifeTimeHint lifetime,ZoneFile *file){
   return s_zbds_[0]->AllocateZone(lifetime,file);
 }
+*/
 /*
 Zone *ZonedBlockDevice::AllocateZone(Env::WriteLifeTimeHint lifetime,
                                      ZoneFile *zone_file, Zone *before_zone) {
@@ -1358,12 +1364,12 @@ Zone *ZonedBlockDevice::AllocateZone(Env::WriteLifeTimeHint lifetime,
 Zone *ZonedBlockDevice::AllocateZone(Env::WriteLifeTimeHint lifetime,ZoneFile *zone_file, Zone *before_zone){
   return s_zbds_[0]->AllocateZone(lifetime,zone_file,before_zone);
 }
-/*
+
 std::string ZonedBlockDevice::GetFilename() { return filename_; }
+/*
 uint32_t ZonedBlockDevice::GetBlockSize() { return block_sz_; }
 */
 //need to modify
-std::string ZonedBlockDevice::GetFilename() { return s_zbds_[0]->GetFilename(); }
 uint32_t ZonedBlockDevice::GetBlockSize() { return s_zbds_[0]->GetBlockSize(); }
 
 void ZonedBlockDevice::ShareFileMtx(){
@@ -1392,19 +1398,33 @@ void ZonedBlockDevice::UnlockMutex(){
 #endif
 }
 
-std::vector<std::mutex*> *ZonedBlockDevice::FindMtxsOnFile(ZoneFile* zonefile){
+std::mutex *ZonedBlockDevice::GetMtxOnFile(ZoneFile* zonefile){
   assert(nullptr != zonefile);
-  std::vector<std::mutex*> *mtxs_on_file = new std::vector<std::mutex*>;
+  std::mutex *mtx_on_file = nullptr;
 #ifdef INDEPENDENT_GC_THREAD
-  for(auto extent:zonefile->GetExtents()){
-    mtxs_on_file->push_back(&(extent->zone_->GetSZBD()->zonefile_mtx_));
-  }
-  std::sort(mtxs_on_file->begin(),mtxs_on_file->end());
-  mtxs_on_file->erase(std::unique(mtxs_on_file->begin(),mtxs_on_file->end()),mtxs_on_file->end());
+  mtx_on_file = zonefile_mtxs_[zonefile->GetSubZBD()];
+#else
+  mtx_on_file = files_mtx_;
 #endif
-  return mtxs_on_file;
+  return mtx_on_file;
 }
 
+unsigned int ZonedBlockDevice::GetIONum(){
+  unsigned int ret = io_num_;
+  io_num_ = (io_num_+1)%s_zbds_.size();
+  return ret;
+}
+//(temp ver)return a s_zbd with the most free space
+SubZonedBlockDevice *ZonedBlockDevice::AllocateSubZBD(){
+  SubZonedBlockDevice* ret = s_zbds_[0];
+  if(s_zbds_.size() > 1){
+    for(unsigned int i=1; i!=s_zbds_.size(); i++){
+      if(ret->GetFreeSpace()<s_zbds_[i]->GetFreeSpace()) ret = s_zbds_[i];   
+    }
+  }
+  return ret;
+}
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 Zone *SubZonedBlockDevice::GetIOZone(uint64_t offset) {
   for (const auto z : io_zones)
     if (z->start_ <= offset && offset < (z->start_ + zone_sz_)) return z;
