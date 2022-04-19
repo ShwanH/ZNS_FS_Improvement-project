@@ -60,7 +60,7 @@ IOStatus ZenMetaLog::AddRecord(const Slice& slice) {
 }
 
 IOStatus ZenMetaLog::Read(Slice* slice) {
-  int f = zbd_->GetReadFD();
+  int f = s_zbd_->GetReadFD();
   const char* data = slice->data();
   size_t read = 0;
   size_t to_read = slice->size();
@@ -352,8 +352,8 @@ IOStatus ZenFS::DeleteFile(std::string fname) {
     if (s.ok()) {
       files_.erase(fname);
 #ifdef ZONE_CUSTOM_DEBUG
-      if (zbd_->GetZoneLogFile()) {
-        fprintf(zbd_->GetZoneLogFile(), "%-10ld%-8s%-8d%-8d%-45s\n",
+      if (zbd_->GetZoneLogFile(zoneFile)) {
+        fprintf(zbd_->GetZoneLogFile(zoneFile), "%-10ld%-8s%-8d%-8d%-45s\n",
                 (long int)((double)clock() / CLOCKS_PER_SEC * 1000), "DEL", 0,
                 0, fname.c_str());
       }

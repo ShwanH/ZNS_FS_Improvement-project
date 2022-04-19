@@ -117,7 +117,6 @@ class Superblock {
     if (nr_zones_ > zbd->GetNrZones())
       return Status::Corruption("ZenFS Superblock",
                                 "Error: nr of zones missmatch");
-
     return Status::OK();
   }
 
@@ -131,6 +130,7 @@ class ZenMetaLog {
   uint64_t read_pos_;
   Zone* zone_;
   ZonedBlockDevice* zbd_;
+  SubZonedBlockDevice* s_zbd_;
   size_t bs_;
 
   /* Every meta log record is prefixed with a CRC(32 bits) and record length (32
@@ -141,8 +141,9 @@ class ZenMetaLog {
   ZenMetaLog(ZonedBlockDevice* zbd, Zone* zone) {
     zbd_ = zbd;
     zone_ = zone;
+    s_zbd_ = zone->GetSubZBD();
     zone_->open_for_write_ = true;
-    bs_ = zbd_->GetBlockSize();
+    bs_ = s_zbd_->GetBlockSize();
     read_pos_ = zone->start_;
   }
 

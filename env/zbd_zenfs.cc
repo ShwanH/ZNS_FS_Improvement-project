@@ -129,8 +129,8 @@ uint64_t Zone::GetZoneNr() { return start_ / s_zbd_->GetZoneSize(); }
 void Zone::SetZoneFile(ZoneFile *file, ZoneExtent *extent) {
   assert(nullptr != file);
 
-  bool is_sst = file->GetFilename().find("sst") == std::string::npos;
-  bool is_log = file->GetFilename().find("log") == std::string::npos;
+  bool is_sst = file->GetFilename().find("sst") != std::string::npos;
+  bool is_log = file->GetFilename().find("log") != std::string::npos;
   if (!is_sst && !is_log) {
     has_meta_ = true;
   }
@@ -339,15 +339,6 @@ Zone *ZonedBlockDevice::GetIOZone(uint64_t offset) {
   return nullptr;
 }
 */
-Zone* ZonedBlockDevice::GetIOZone(uint64_t offset) {
-  Zone* io_zone = nullptr;
-  for(const auto s_zbd:s_zbds_){
-    io_zone = s_zbd->GetIOZone(offset);
-    if(io_zone != nullptr)
-      return io_zone;
-  }
-  return io_zone;
-}
 /*
 ZonedBlockDevice::ZonedBlockDevice(std::string bdevname,
                                    std::shared_ptr<Logger> logger)
@@ -363,7 +354,7 @@ ZonedBlockDevice::ZonedBlockDevice(std::string bdevname,
 };
 */
 
-ZonedBlockDevice::ZonedBlockDevice(std::string bdevname,std::shared_ptr<Logger> logger):filename_("/dev/"+bdevname){
+ZonedBlockDevice::ZonedBlockDevice(std::string bdevname,std::shared_ptr<Logger> logger):filename_("/dev/"+bdevname), logger_(logger) {
   std::string s_bdevname;
   std::stringstream sstream(bdevname);
   while(getline(sstream,s_bdevname,',')){
@@ -376,7 +367,7 @@ ZonedBlockDevice::ZonedBlockDevice(std::string bdevname,std::shared_ptr<Logger> 
 #ifndef INDEPENDENT_GC_THREAD
   files_mtx_ = nullptr;
 #endif
-  io_num_ = 0;
+  meta_num_ = 0;
 }
 
 /*
@@ -785,10 +776,22 @@ void ZonedBlockDevice::LogZoneStats() {
   io_zones_mtx.unlock();
 }
 */
-//need to modify
-void ZonedBlockDevice::LogZoneStats(){
-  s_zbds_[0]->LogZoneStats();
+
+void ZonedBlockDevice::LogZoneStats(SubZonedBlockDevice* s_zbd){
+  if(s_zbd != nullptr){
+    auto it = std::find(s_zbds_.begin(),s_zbds_.end(),s_zbd);
+    if(it == s_zbds_.end()){
+      Warn(logger_, "Failed to log zone stats. Undefined device: %s", s_zbd->GetFilename().c_str());
+    }else{
+      s_zbd->LogZoneStats();
+    }
+  }else{
+    for(auto sub_zbd:s_zbds_){
+      sub_zbd->LogZoneStats();
+    }
+  }
 }
+
 /*
 void ZonedBlockDevice::LogZoneUsage() {
   for (const auto z : io_zones) {
@@ -801,9 +804,20 @@ void ZonedBlockDevice::LogZoneUsage() {
   }
 }
 */
-//need to modify
-void ZonedBlockDevice::LogZoneUsage(){
-  s_zbds_[0]->LogZoneUsage();
+
+void ZonedBlockDevice::LogZoneUsage(SubZonedBlockDevice* s_zbd){
+  if(s_zbd != nullptr){
+    auto it = std::find(s_zbds_.begin(),s_zbds_.end(),s_zbd);
+    if(it == s_zbds_.end()){
+      Warn(logger_, "Failed to log zone usage. Undefined device: %s", s_zbd->GetFilename().c_str());
+    }else{
+      s_zbd->LogZoneUsage();
+    }
+  }else{
+    for(auto sub_zbd:s_zbds_){
+      sub_zbd->LogZoneUsage();
+    }
+  }
 }
 /*
 ZonedBlockDevice::~ZonedBlockDevice() {
@@ -852,9 +866,14 @@ Zone *ZonedBlockDevice::AllocateMetaZone() {
   return nullptr;
 }
 */
-//need to modify
+
 Zone* ZonedBlockDevice::AllocateMetaZone(){
-  return s_zbds_[0]->AllocateMetaZone();
+  unsigned int num_s_zbd = s_zbds_.size();
+  for(unsigned int i =0; i < num_s_zbd; i++){
+    Zone* ret = s_zbds_[GetMetaNum()]->AllocateMetaZone();
+    if(ret != nullptr) return ret;
+  }
+  return nullptr;
 }
 /*
 void ZonedBlockDevice::ResetUnusedIOZones() {
@@ -1360,17 +1379,33 @@ Zone *ZonedBlockDevice::AllocateZone(Env::WriteLifeTimeHint lifetime,
 }
 */
 
-//need to modify
-Zone *ZonedBlockDevice::AllocateZone(Env::WriteLifeTimeHint lifetime,ZoneFile *zone_file, Zone *before_zone){
-  return s_zbds_[0]->AllocateZone(lifetime,zone_file,before_zone);
-}
-
 std::string ZonedBlockDevice::GetFilename() { return filename_; }
 /*
 uint32_t ZonedBlockDevice::GetBlockSize() { return block_sz_; }
 */
-//need to modify
-uint32_t ZonedBlockDevice::GetBlockSize() { return s_zbds_[0]->GetBlockSize(); }
+
+uint32_t ZonedBlockDevice::GetBlockSize() 
+{ 
+  return s_zbds_[0]->GetBlockSize();
+}
+
+uint32_t ZonedBlockDevice::GetZoneSize() 
+{ 
+  return s_zbds_[0]->GetZoneSize();
+}
+
+
+uint32_t ZonedBlockDevice::GetNrZones(){
+  uint32_t ret = 0;
+  for(auto s_zbd:s_zbds_){
+    ret += s_zbd->GetNrZones();
+  }
+  return ret;
+}
+
+FILE *ZonedBlockDevice::GetZoneLogFile(ZoneFile* zoneFile){
+  return zoneFile->GetSubZBD()->GetZoneLogFile();
+}
 
 void ZonedBlockDevice::ShareFileMtx(){
 #ifndef INDEPENDENT_GC_THREAD
@@ -1409,9 +1444,9 @@ std::mutex *ZonedBlockDevice::GetMtxOnFile(ZoneFile* zonefile){
   return mtx_on_file;
 }
 
-unsigned int ZonedBlockDevice::GetIONum(){
-  unsigned int ret = io_num_;
-  io_num_ = (io_num_+1)%s_zbds_.size();
+unsigned int ZonedBlockDevice::GetMetaNum(){
+  unsigned int ret = meta_num_;
+  meta_num_ = (meta_num_+1)%s_zbds_.size();
   return ret;
 }
 //(temp ver)return a s_zbd with the most free space
@@ -1423,6 +1458,20 @@ SubZonedBlockDevice *ZonedBlockDevice::AllocateSubZBD(){
     }
   }
   return ret;
+}
+
+std::vector<Zone *> ZonedBlockDevice::GetMetaZones(){
+  std::vector<Zone *> ret;
+  for(auto s_zbd:s_zbds_){
+    ret.insert(ret.end(),s_zbd->GetMetaZones().begin(),s_zbd->GetMetaZones().end());
+  }
+  return ret;
+}
+
+void ZonedBlockDevice::SetFinishTreshold(uint32_t threshold){
+  for(auto s_zbd:s_zbds_){
+    s_zbd->SetFinishTreshold(threshold);
+  }
 }
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 Zone *SubZonedBlockDevice::GetIOZone(uint64_t offset) {
@@ -1524,8 +1573,8 @@ IOStatus SubZonedBlockDevice::Open(bool readonly) {
   else
     max_nr_open_io_zones_ = info.max_nr_open_zones - 1;
 
-  Info(logger_, "Zone block device nr zones: %u max active: %u max open: %u \n",
-       info.nr_zones, info.max_nr_active_zones, info.max_nr_open_zones);
+  Info(logger_, "Zone block device %s nr zones: %u max active: %u max open: %u \n",
+       bdevname_.c_str(),info.nr_zones, info.max_nr_active_zones, info.max_nr_open_zones);
 
   addr_space_sz = (uint64_t)nr_zones_ * zone_sz_;
 
@@ -1815,10 +1864,11 @@ void SubZonedBlockDevice::LogZoneStats() {
   if (reclaimables_max_capacity == 0) reclaimables_max_capacity = 1;
 
   Info(logger_,
+       "Zoned Block Device: %s"
        "[Zonestats:time(s),used_cap(MB),reclaimable_cap(MB), "
        "avg_reclaimable(%%), active(#), active_zones(#), open_zones(#)] %ld "
        "%lu %lu %lu %lu %ld %ld\n",
-       time(NULL) - start_time_, used_capacity / MB, reclaimable_capacity / MB,
+       bdevname_.c_str(), time(NULL) - start_time_, used_capacity / MB, reclaimable_capacity / MB,
        100 * reclaimable_capacity / reclaimables_max_capacity, active,
        active_io_zones_.load(), open_io_zones_.load());
 
@@ -1830,8 +1880,8 @@ void SubZonedBlockDevice::LogZoneUsage() {
     int64_t used = z->used_capacity_;
 
     if (used > 0) {
-      Debug(logger_, "Zone 0x%lX used capacity: %ld bytes (%ld MB)\n",
-            z->start_, used, used / MB);
+      Debug(logger_, "%s' zone 0x%lX used capacity: %ld bytes (%ld MB)\n",
+            bdevname_.c_str(), z->start_, used, used / MB);
     }
   }
 }
@@ -2253,8 +2303,8 @@ Zone *SubZonedBlockDevice::AllocateZoneImpl(Env::WriteLifeTimeHint lifetime,
     allocated_zone->open_for_write_ = true;
     open_io_zones_++;
     Debug(logger_,
-          "Allocating zone(new=%d) start: 0x%lx wp: 0x%lx lt: %d file lt: %d\n",
-          new_zone, allocated_zone->start_, allocated_zone->wp_,
+          "Zoned Block Device:%s, Allocating zone(new=%d) start: 0x%lx wp: 0x%lx lt: %d file lt: %d\n",
+          bdevname_.c_str(), new_zone, allocated_zone->start_, allocated_zone->wp_,
           allocated_zone->lifetime_, lifetime);
     *is_empty = new_zone;
   }
