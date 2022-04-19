@@ -1453,7 +1453,7 @@ unsigned int ZonedBlockDevice::GetMetaNum(){
 SubZonedBlockDevice *ZonedBlockDevice::AllocateSubZBD(){
   SubZonedBlockDevice* ret = s_zbds_[0];
   if(s_zbds_.size() > 1){
-    for(unsigned int i=1; i!=s_zbds_.size(); i++){
+    for(unsigned int i=1; i<s_zbds_.size(); i++){
       if(ret->GetFreeSpace()<s_zbds_[i]->GetFreeSpace()) ret = s_zbds_[i];   
     }
   }
@@ -1463,7 +1463,8 @@ SubZonedBlockDevice *ZonedBlockDevice::AllocateSubZBD(){
 std::vector<Zone *> ZonedBlockDevice::GetMetaZones(){
   std::vector<Zone *> ret;
   for(auto s_zbd:s_zbds_){
-    ret.insert(ret.end(),s_zbd->GetMetaZones().begin(),s_zbd->GetMetaZones().end());
+    std::vector<Zone *> meta_zones = s_zbd->GetMetaZones();
+    ret.insert(ret.end(),meta_zones.begin(),meta_zones.end());
   }
   return ret;
 }

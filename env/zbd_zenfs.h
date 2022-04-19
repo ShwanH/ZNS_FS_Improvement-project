@@ -421,7 +421,7 @@ class ZonedBlockDevice {
   void LogZoneStats(SubZonedBlockDevice* s_zbd = nullptr);
   void LogZoneUsage(SubZonedBlockDevice* s_zbd = nullptr);
   void ShareFileMtx();
-  //need to modify/////////////////////////////////////////////////////////////////////
+  
   //int GetReadFD() { return s_zbds_[0]->GetReadFD(); }
   //int GetReadDirectFD() { return s_zbds_[0]->GetReadDirectFD(); }
   //int GetWriteFD() { return s_zbds_[0]->GetWriteFD(); }
@@ -432,7 +432,7 @@ class ZonedBlockDevice {
   std::vector<Zone *> GetMetaZones();
 
   void SetFinishTreshold(uint32_t threshold);
-  /////////////////////////////////////////////////////////////////////////////////////
+  
   /*
   void NotifyIOZoneFull();
   void NotifyIOZoneClosed();
