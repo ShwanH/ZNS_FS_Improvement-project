@@ -1449,12 +1449,15 @@ unsigned int ZonedBlockDevice::GetMetaNum(){
   meta_num_ = (meta_num_+1)%s_zbds_.size();
   return ret;
 }
-//(temp ver)return a s_zbd with the most free space
+//(temp ver)return a s_zbd with the most free space and gc thread is not running
 SubZonedBlockDevice *ZonedBlockDevice::AllocateSubZBD(){
   SubZonedBlockDevice* ret = s_zbds_[0];
   if(s_zbds_.size() > 1){
     for(unsigned int i=1; i<s_zbds_.size(); i++){
-      if(ret->GetFreeSpace()<s_zbds_[i]->GetFreeSpace()) ret = s_zbds_[i];   
+      if(ret->GetFreeSpace()<s_zbds_[i]->GetFreeSpace()){
+        if(!s_zbds_[i]->IsGcRunning() || ret->IsGcRunning())
+        ret = s_zbds_[i];
+      }   
     }
   }
   return ret;
@@ -1648,6 +1651,7 @@ void SubZonedBlockDevice::GarbageCollectionThread() {
     }
 
     if (is_trigger) {
+      is_gc_running = true;
       int ret = 0;
       io_zones_mtx.lock();
 #ifdef ZONE_CUSTOM_DEBUG
@@ -1666,6 +1670,7 @@ void SubZonedBlockDevice::GarbageCollectionThread() {
       io_zones_mtx.unlock();
       gc_force_ = false;
       NotifyZoneAllocateAvail();
+      is_gc_running = false;
     }
   }
 }

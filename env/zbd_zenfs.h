@@ -252,6 +252,7 @@ class SubZonedBlockDevice{
 
     unsigned int max_nr_active_io_zones_;
     unsigned int max_nr_open_io_zones_;
+    bool is_gc_running = false;
 
     Zone *AllocateZoneImpl(Env::WriteLifeTimeHint lifetime, ZoneFile *file,
                          int *is_empty);
@@ -308,6 +309,7 @@ class SubZonedBlockDevice{
     unsigned int GetMaxNrOpenIOZone() { return max_nr_open_io_zones_; }
     long GetActiveIOZone() { return active_io_zones_; }
     unsigned int GetMaxNrActiveIOZone() { return max_nr_active_io_zones_; }
+    bool IsGcRunning(){return is_gc_running;}
   private:
     void GarbageCollectionThread(void);
     uint32_t GarbageCollection(const bool &is_trigger,
@@ -334,6 +336,7 @@ class SubZonedBlockDevice{
                           Env::WriteLifeTimeHint lifetime);
     std::string GetZoneFileExt(const std::string filename);
     Zone *AllocateZone(Env::WriteLifeTimeHint lifetime, ZoneFile *file);
+
 };
 
 class ZonedBlockDevice {
