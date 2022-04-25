@@ -467,7 +467,7 @@ void ZonedBlockDevice::UnlockMutex(){
 #endif
 }
 
-std::mutex *ZonedBlockDevice::GetMtxOnFile(ZoneFile* zonefile){
+std::mutex *ZonedBlockDevice::GetMtxOnFile([[maybe_unused]]ZoneFile* zonefile){
   assert(nullptr != zonefile);
   std::mutex *mtx_on_file = nullptr;
 #ifdef INDEPENDENT_GC_THREAD
