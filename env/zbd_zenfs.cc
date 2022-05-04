@@ -467,7 +467,7 @@ void ZonedBlockDevice::UnlockMutex(){
 #endif
 }
 
-std::mutex *ZonedBlockDevice::GetMtxOnFile(ZoneFile* zonefile){
+std::mutex *ZonedBlockDevice::GetMtxOnFile([[maybe_unused]]ZoneFile* zonefile){
   assert(nullptr != zonefile);
   std::mutex *mtx_on_file = nullptr;
 #ifdef INDEPENDENT_GC_THREAD
@@ -523,6 +523,11 @@ SubZonedBlockDevice::SubZonedBlockDevice(std::string bdevname,
     : bdevname_(bdevname),filename_("/dev/" + bdevname), logger_(logger) {
   Info(logger_, "New Zoned Block Device: %s", filename_.c_str());
   zone_log_file_ = nullptr;
+//gc_log, alloc_log
+  gc_log_file_ = nullptr;
+  alloc_log_file_ = nullptr;
+
+
 #ifndef INDEPENDENT_GC_THREAD
   files_mtx_ = nullptr;
 #endif
@@ -543,6 +548,9 @@ IOStatus SubZonedBlockDevice::Open(bool readonly) {
   uint64_t m = 0;
   int ret;
   std::stringstream sstr;
+//gc_log, alloc_log
+  std::stringstream sstr_gc;
+  std::stringstream sstr_alloc;
 
   read_f_ = zbd_open(filename_.c_str(), O_RDONLY, &info);
   if (read_f_ < 0) {
@@ -587,6 +595,9 @@ IOStatus SubZonedBlockDevice::Open(bool readonly) {
 #else
   sstr <<bdevname_<< "_zone_e" << ZONE_RESET_TRIGGER << "_unknown.log";
 #endif
+//gc_log, alloc_log
+  sstr_gc <<bdevname_<< "_zone_e" << ZONE_RESET_TRIGGER << "_GC.log";
+  sstr_alloc <<bdevname_<< "_zone_e" << ZONE_RESET_TRIGGER << "_ZoneAlloc.log";
 
 #ifdef ZONE_CUSTOM_DEBUG
   zone_log_file_ = fopen(sstr.str().c_str(), "w");
@@ -596,6 +607,21 @@ IOStatus SubZonedBlockDevice::Open(bool readonly) {
           "CMD", "ZONE(-)", "ZONE(+)", "FILE NAME", "WRITE", "FILE SIZE",
           "LEVEL");
   fflush(zone_log_file_);
+
+//gc_log
+  gc_log_file_ = fopen(sstr_gc.str().c_str(), "w");
+  assert(NULL != gc_log_file_);
+
+  fprintf(gc_log_file_, "%-10s%-10s%-8s%-8.2s\n", "TIME(ms)",
+           "STATUS", "ZONE NR", "INVALID(%)");
+  fflush(gc_log_file_);
+//alloc_log
+  alloc_log_file_ = fopen(sstr_alloc.str().c_str(), "w");
+  assert(NULL != alloc_log_file_);
+
+  fprintf(alloc_log_file_, "%-10s%-8s%-8s%-45s%-10s%-10s\n", "TIME(ms)",
+           "ZONE(-)", "ZONE(+)", "FILE NAME", "WRITE", "FILE SIZE");
+  fflush(alloc_log_file_);
 #endif
 
   // We need one open zone for meta data writes, the rest can be used for
@@ -694,7 +720,7 @@ void SubZonedBlockDevice::GarbageCollectionThread() {
                 (long int)((double)clock() / CLOCKS_PER_SEC * 1000), "FORCED",
                 GetNrZones(), GetEmptyZones());
         fflush(zone_log_file_);
-      }
+
 #endif
       active_gc_++;
       ret = GarbageCollection(is_trigger, Env::WLTH_NONE, gc_force_,
@@ -801,6 +827,7 @@ uint32_t SubZonedBlockDevice::GarbageCollection(
         continue;
       }
 #ifdef ZONE_CUSTOM_DEBUG
+//gc start
       if (zone_log_file_) {
         fprintf(zone_log_file_, "%-10ld%-8s%-lu%-8.2lf%-8.2lf%-8u%-8.2lf\n",
                 (long int)((double)clock() / CLOCKS_PER_SEC * 1000), "GC_S",
@@ -809,14 +836,30 @@ uint32_t SubZonedBlockDevice::GarbageCollection(
                 (GetNrZones() * (double)(invalid_level + 1) / 20));
         fflush(zone_log_file_);
       }
+      //gc_log
+      if (gc_log_file_) {
+        fprintf(gc_log_file_, "%-10ld%-10s%-8lu%-8.2lf\n",
+                (long int)((double)clock() / CLOCKS_PER_SEC * 1000), "GC_Start",
+                victim->GetZoneNr(),
+                victim->GetInvalidPercentage());
+        fflush(gc_log_file_);
+      }
 #endif
       (void)ValidDataCopy(lifetime, victim);
 #ifdef ZONE_CUSTOM_DEBUG
+//gc end
       if (zone_log_file_) {
         fprintf(zone_log_file_, "%-10ld%-8s%-8lu\n",
                 (long int)((double)clock() / CLOCKS_PER_SEC * 1000), "GC_E",
                 victim->GetZoneNr());
         fflush(zone_log_file_);
+      }
+      //gc_log
+      if (gc_log_file_) {
+        fprintf(gc_log_file_, "%-10ld%-10s%-8lu\n",
+                (long int)((double)clock() / CLOCKS_PER_SEC * 1000), "GC_End",
+                victim->GetZoneNr());
+        fflush(gc_log_file_);
       }
 #endif
     }  // victim zone processing loop
@@ -947,6 +990,15 @@ SubZonedBlockDevice::~SubZonedBlockDevice() {
   if (zone_log_file_ != nullptr) {
     fclose(zone_log_file_);
   }
+//gc_log
+  if (gc_log_file_ != nullptr) {
+    fclose(gc_log_file_);
+  }
+//alloc_log
+  if (alloc_log_file_ != nullptr) {
+    fclose(alloc_log_file_);
+  }
+
 }
 
 Zone *SubZonedBlockDevice::AllocateMetaZone() {
@@ -1357,6 +1409,8 @@ Zone *SubZonedBlockDevice::AllocateZone(Env::WriteLifeTimeHint lifetime,
   Zone *allocated_zone = nullptr;
 #ifdef ZONE_CUSTOM_DEBUG
   assert(nullptr != zone_log_file_);
+  //alloc_log
+  assert(nullptr != alloc_log_file_);
 #endif
 
   do {
@@ -1428,6 +1482,8 @@ Zone *SubZonedBlockDevice::AllocateZone(Env::WriteLifeTimeHint lifetime,
   assert(nullptr != zone_file);
 #ifdef ZONE_CUSTOM_DEBUG
   assert(nullptr != zone_log_file_);
+  //alloc_log
+  assert(nullptr != alloc_log_file_);
 #endif
 
   zone = AllocateZone(lifetime, zone_file);
@@ -1439,6 +1495,12 @@ Zone *SubZonedBlockDevice::AllocateZone(Env::WriteLifeTimeHint lifetime,
             zone_file->GetFileSize(),
             (unsigned int)zone_file->GetWriteLifeTimeHint());
     fflush(zone_log_file_);
+    //alloc_log
+    fprintf(alloc_log_file_, "%-10ld%-8s%-8d%-8lu%-45s%-10u%-10lu\n",
+            (long int)((double)clock() / CLOCKS_PER_SEC * 1000), "NEW", 0,
+            zone->GetZoneNr(), zone_file->GetFilename().c_str(), 0,
+            zone_file->GetFileSize());
+    fflush(alloc_log_file_);
   } else {
     fprintf(zone_log_file_, "%-10ld%-8s%-8lu%-8lu%-45s%-10u%-10lu%-10u\n",
             (long int)((double)clock() / CLOCKS_PER_SEC * 1000), "EXHAUST",
@@ -1446,6 +1508,13 @@ Zone *SubZonedBlockDevice::AllocateZone(Env::WriteLifeTimeHint lifetime,
             zone_file->GetFilename().c_str(), 0, zone_file->GetFileSize(),
             (unsigned int)zone_file->GetWriteLifeTimeHint());
     fflush(zone_log_file_);
+    //alloc_log
+    fprintf(alloc_log_file_, "%-10ld%-8s%-8lu%-8lu%-45s%-10u%-10lu%-10u\n",
+            (long int)((double)clock() / CLOCKS_PER_SEC * 1000), "EXHAUST",
+            before_zone->GetZoneNr(), zone->GetZoneNr(),
+            zone_file->GetFilename().c_str(), 0, zone_file->GetFileSize(),
+            (unsigned int)zone_file->GetWriteLifeTimeHint());
+    fflush(alloc_log_file_);
   }
 #else
   (void)before_zone;
