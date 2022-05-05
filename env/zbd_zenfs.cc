@@ -467,7 +467,7 @@ void ZonedBlockDevice::UnlockMutex(){
 #endif
 }
 
-std::mutex *ZonedBlockDevice::GetMtxOnFile([[maybe_unused]]ZoneFile* zonefile){
+std::mutex *ZonedBlockDevice::GetMtxOnFile(ZoneFile* zonefile){
   assert(nullptr != zonefile);
   std::mutex *mtx_on_file = nullptr;
 #ifdef INDEPENDENT_GC_THREAD
@@ -523,10 +523,6 @@ SubZonedBlockDevice::SubZonedBlockDevice(std::string bdevname,
     : bdevname_(bdevname),filename_("/dev/" + bdevname), logger_(logger) {
   Info(logger_, "New Zoned Block Device: %s", filename_.c_str());
   zone_log_file_ = nullptr;
-//gc_log, alloc_log
-  gc_log_file_ = nullptr;
-  alloc_log_file_ = nullptr;
-
 #ifndef INDEPENDENT_GC_THREAD
   files_mtx_ = nullptr;
 #endif
@@ -547,9 +543,6 @@ IOStatus SubZonedBlockDevice::Open(bool readonly) {
   uint64_t m = 0;
   int ret;
   std::stringstream sstr;
-//gc_log, alloc_log
-  std::stringstream sstr_gc;
-  std::stringstream sstr_alloc;
 
   read_f_ = zbd_open(filename_.c_str(), O_RDONLY, &info);
   if (read_f_ < 0) {
@@ -594,9 +587,6 @@ IOStatus SubZonedBlockDevice::Open(bool readonly) {
 #else
   sstr <<bdevname_<< "_zone_e" << ZONE_RESET_TRIGGER << "_unknown.log";
 #endif
-//gc_log, alloc_log
-  sstr_gc <<bdevname_<< "_zone_e" << ZONE_RESET_TRIGGER << "_GC.log";
-  sstr_alloc <<bdevname_<< "_zone_e" << ZONE_RESET_TRIGGER << "_ZoneAlloc.log";
 
 #ifdef ZONE_CUSTOM_DEBUG
   zone_log_file_ = fopen(sstr.str().c_str(), "w");
@@ -606,21 +596,6 @@ IOStatus SubZonedBlockDevice::Open(bool readonly) {
           "CMD", "ZONE(-)", "ZONE(+)", "FILE NAME", "WRITE", "FILE SIZE",
           "LEVEL");
   fflush(zone_log_file_);
-
-//gc_log
-  gc_log_file_ = fopen(sstr_gc.str().c_str(), "w");
-  assert(NULL != gc_log_file_);
-
-  fprintf(gc_log_file_, "%-10s%-10s%-8s%-8s\n", "TIME(ms)",
-           "STATUS", "ZONE NR", "INVAL(%)");
-  fflush(gc_log_file_);
-//alloc_log
-  alloc_log_file_ = fopen(sstr_alloc.str().c_str(), "w");
-  assert(NULL != alloc_log_file_);
-  //시간 / zone nr / 파일이름 / free space / gc done
-  fprintf(alloc_log_file_, "%-10s%-8s%-45s%-15s%-15s\n", "TIME(ms)",
-           "ZONE NR","FILE NAME","FREE SPACE","GC DONE");
-  fflush(alloc_log_file_);
 #endif
 
   // We need one open zone for meta data writes, the rest can be used for
@@ -826,7 +801,6 @@ uint32_t SubZonedBlockDevice::GarbageCollection(
         continue;
       }
 #ifdef ZONE_CUSTOM_DEBUG
-//gc start
       if (zone_log_file_) {
         fprintf(zone_log_file_, "%-10ld%-8s%-lu%-8.2lf%-8.2lf%-8u%-8.2lf\n",
                 (long int)((double)clock() / CLOCKS_PER_SEC * 1000), "GC_S",
@@ -835,40 +809,14 @@ uint32_t SubZonedBlockDevice::GarbageCollection(
                 (GetNrZones() * (double)(invalid_level + 1) / 20));
         fflush(zone_log_file_);
       }
-      //gc_log
-      if (gc_log_file_) {
-        fprintf(gc_log_file_, "%-10ld%-10s%-8lu%-8.2lf\n",
-                (long int)((double)clock() / CLOCKS_PER_SEC * 1000), "GC_Start",
-                victim->GetZoneNr(),
-                victim->GetInvalidPercentage());
-        fflush(gc_log_file_);
-      }
 #endif
       (void)ValidDataCopy(lifetime, victim);
 #ifdef ZONE_CUSTOM_DEBUG
-//gc end
-      //gc_done_Zones에 추가.(vector add)
-      gc_done_Zones.push_back(victim->GetZoneNr());
       if (zone_log_file_) {
         fprintf(zone_log_file_, "%-10ld%-8s%-8lu\n",
                 (long int)((double)clock() / CLOCKS_PER_SEC * 1000), "GC_E",
                 victim->GetZoneNr());
         fflush(zone_log_file_);
-      }
-      //gc_log
-      if (gc_log_file_) {
-        fprintf(gc_log_file_, "%-10ld%-10s%-8lu\n",
-                (long int)((double)clock() / CLOCKS_PER_SEC * 1000), "GC_End",
-                victim->GetZoneNr());
-        fflush(gc_log_file_);
-        gc_total++;
-      }
-      //alloc_log
-      if (alloc_log_file_) {
-        fprintf(alloc_log_file_, "%-10ld%-8lu%-45s%-10lu\n",
-                (long int)((double)clock() / CLOCKS_PER_SEC * 1000),
-                victim->GetZoneNr(),"GC DONE", GetFreeSpace());
-        fflush(alloc_log_file_);
       }
 #endif
     }  // victim zone processing loop
@@ -999,18 +947,6 @@ SubZonedBlockDevice::~SubZonedBlockDevice() {
   if (zone_log_file_ != nullptr) {
     fclose(zone_log_file_);
   }
-//gc_log
-  if (gc_log_file_ != nullptr) {
-    //gc_testing..
-    fprintf(gc_log_file_, "%-10s%-8lu\n", "TOTAL GC NUM : ", gc_total );
-    fflush(gc_log_file_);
-    fclose(gc_log_file_);
-  }
-//alloc_log
-  if (alloc_log_file_ != nullptr) {
-    fclose(alloc_log_file_);
-  }
-
 }
 
 Zone *SubZonedBlockDevice::AllocateMetaZone() {
@@ -1421,8 +1357,6 @@ Zone *SubZonedBlockDevice::AllocateZone(Env::WriteLifeTimeHint lifetime,
   Zone *allocated_zone = nullptr;
 #ifdef ZONE_CUSTOM_DEBUG
   assert(nullptr != zone_log_file_);
-  //alloc_log
-  assert(nullptr != alloc_log_file_);
 #endif
 
   do {
@@ -1494,8 +1428,6 @@ Zone *SubZonedBlockDevice::AllocateZone(Env::WriteLifeTimeHint lifetime,
   assert(nullptr != zone_file);
 #ifdef ZONE_CUSTOM_DEBUG
   assert(nullptr != zone_log_file_);
-  //alloc_log
-  assert(nullptr != alloc_log_file_);
 #endif
 
   zone = AllocateZone(lifetime, zone_file);
@@ -1507,20 +1439,6 @@ Zone *SubZonedBlockDevice::AllocateZone(Env::WriteLifeTimeHint lifetime,
             zone_file->GetFileSize(),
             (unsigned int)zone_file->GetWriteLifeTimeHint());
     fflush(zone_log_file_);
-    //alloc_log
-    //시간 / zone nr / 파일이름 / free space / gc done
-    //gc_done 여부 확인해서 값 바꿔주기.
-    auto it = find(gc_done_Zones.begin(), gc_done_Zones.end(), zone->GetZoneNr());
-    gc_done_Zone = (it != gc_done_Zones.end())? "GC DONE" : "";
-    //alloc_log
-    fprintf(alloc_log_file_, "%-10ld%-8lu%-45s%-15lu%-15s\n",
-            (long int)((double)clock() / CLOCKS_PER_SEC * 1000),
-            zone->GetZoneNr(), zone_file->GetFilename().c_str(),
-            GetFreeSpace(), gc_done_Zone.c_str() );
-    fflush(alloc_log_file_);
-    //프린트 하고 값 삭제
-    gc_done_Zones.erase(remove(gc_done_Zones.begin(), gc_done_Zones.end(), zone->GetZoneNr()), gc_done_Zones.end());
-    gc_done_Zone = "";
   } else {
     fprintf(zone_log_file_, "%-10ld%-8s%-8lu%-8lu%-45s%-10u%-10lu%-10u\n",
             (long int)((double)clock() / CLOCKS_PER_SEC * 1000), "EXHAUST",
