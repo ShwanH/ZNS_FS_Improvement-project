@@ -228,6 +228,7 @@ class SubZonedBlockDevice{
     time_t start_time_;
     std::shared_ptr<Logger> logger_;
     uint32_t finish_threshold_ = 0;
+    long int gc_time_sum = 0;
 
     std::atomic<long> active_io_zones_;
     std::atomic<long> open_io_zones_;
@@ -254,8 +255,8 @@ class SubZonedBlockDevice{
     //gc_total count
     uint64_t gc_total = 0;
     //list for gc done zones num
-    std::vector<int> gc_done_Zones;
-    std::string gc_done_Zone;
+    //std::vector<int> gc_done_Zones;
+    //std::string gc_done_Zone;
   
     char *gc_buffer_;
 
@@ -319,6 +320,7 @@ class SubZonedBlockDevice{
     long GetActiveIOZone() { return active_io_zones_; }
     unsigned int GetMaxNrActiveIOZone() { return max_nr_active_io_zones_; }
     bool IsGcRunning(){return is_gc_running;}
+    FILE *GetAllocLog(){return alloc_log_file_;}
   private:
     void GarbageCollectionThread(void);
     uint32_t GarbageCollection(const bool &is_trigger,
@@ -369,7 +371,7 @@ class ZonedBlockDevice {
   void LockMutex();
   void UnlockMutex();
   std::mutex *GetMtxOnFile(ZoneFile *zonefile); 
-  SubZonedBlockDevice* AllocateSubZBD();
+  SubZonedBlockDevice* AllocateSubZBD(ZoneFile* zonefile);
   IOStatus Open(bool readonly = false);
 
   Zone *AllocateMetaZone();

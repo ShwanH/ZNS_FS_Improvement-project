@@ -484,7 +484,8 @@ unsigned int ZonedBlockDevice::GetMetaNum(){
   return ret;
 }
 //return a s_zbd with the most free space and gc thread is not running
-SubZonedBlockDevice *ZonedBlockDevice::AllocateSubZBD(){
+SubZonedBlockDevice *ZonedBlockDevice::AllocateSubZBD(ZoneFile* zonefile){
+  assert(nullptr != zonefile);
   SubZonedBlockDevice* ret = s_zbds_[0];
   if(s_zbds_.size() > 1){
     for(unsigned int i=1; i<s_zbds_.size(); i++){
@@ -494,6 +495,14 @@ SubZonedBlockDevice *ZonedBlockDevice::AllocateSubZBD(){
       }   
     }
   }
+#ifdef ZONE_CUSTOM_DEBUG
+  assert(ret->GetAllocLog());
+  fprintf(ret->GetAllocLog(), "%-10ld%-45s%-15lu%-15s\n",
+            (long int)((double)clock() / CLOCKS_PER_SEC * 1000),
+            zonefile->GetFilename().c_str(),
+            ret->GetFreeSpace(), ret->IsGcRunning()?"Y":"N" );
+  fflush(ret->GetAllocLog());
+#endif
   return ret;
 }
 
@@ -617,9 +626,9 @@ IOStatus SubZonedBlockDevice::Open(bool readonly) {
 //alloc_log
   alloc_log_file_ = fopen(sstr_alloc.str().c_str(), "w");
   assert(NULL != alloc_log_file_);
-  //시간 / zone nr / 파일이름 / free space / gc done
-  fprintf(alloc_log_file_, "%-10s%-8s%-45s%-15s%-15s\n", "TIME(ms)",
-           "ZONE NR","FILE NAME","FREE SPACE","GC DONE");
+  //시간 / 파일이름 / free space / gc done
+  fprintf(alloc_log_file_, "%-10s%-45s%-15s%-15s\n", "TIME(ms)",
+           "FILE NAME","FREE SPACE","GC PROCEEDING");
   fflush(alloc_log_file_);
 #endif
 
@@ -740,6 +749,8 @@ uint32_t SubZonedBlockDevice::GarbageCollection(
   const uint64_t total_space = (uint64_t)nr_zones_ * zone_sz_;
   uint64_t processed_reset = 0;
   uint64_t empty_zones_for_gc = 0;
+  long int start_time = 0;
+  long int end_time = 0;
   Zone *finish_victim = nullptr;
 #ifndef INDEPENDENT_GC_THREAD
   if (files_mtx_ == nullptr) {  // This for zenfs
@@ -842,13 +853,14 @@ uint32_t SubZonedBlockDevice::GarbageCollection(
                 victim->GetZoneNr(),
                 victim->GetInvalidPercentage());
         fflush(gc_log_file_);
+        start_time = (long int)((double)clock() / CLOCKS_PER_SEC * 1000);
       }
 #endif
       (void)ValidDataCopy(lifetime, victim);
 #ifdef ZONE_CUSTOM_DEBUG
 //gc end
       //gc_done_Zones에 추가.(vector add)
-      gc_done_Zones.push_back(victim->GetZoneNr());
+      //gc_done_Zones.push_back(victim->GetZoneNr());
       if (zone_log_file_) {
         fprintf(zone_log_file_, "%-10ld%-8s%-8lu\n",
                 (long int)((double)clock() / CLOCKS_PER_SEC * 1000), "GC_E",
@@ -862,14 +874,18 @@ uint32_t SubZonedBlockDevice::GarbageCollection(
                 victim->GetZoneNr());
         fflush(gc_log_file_);
         gc_total++;
+        end_time = (long int)((double)clock() / CLOCKS_PER_SEC * 1000);
+        gc_time_sum += end_time - start_time;
       }
       //alloc_log
+      /*
       if (alloc_log_file_) {
         fprintf(alloc_log_file_, "%-10ld%-8lu%-45s%-10lu\n",
                 (long int)((double)clock() / CLOCKS_PER_SEC * 1000),
                 victim->GetZoneNr(),"GC DONE", GetFreeSpace());
         fflush(alloc_log_file_);
       }
+      */
 #endif
     }  // victim zone processing loop
     empty_zones_for_gc = GetFreeSpace();
@@ -1002,7 +1018,7 @@ SubZonedBlockDevice::~SubZonedBlockDevice() {
 //gc_log
   if (gc_log_file_ != nullptr) {
     //gc_testing..
-    fprintf(gc_log_file_, "%-10s%-8lu\n", "TOTAL GC NUM : ", gc_total );
+    fprintf(gc_log_file_, "%-10s%-8lu%-8lu, AVG GC TIME \n", "TOTAL GC NUM : ", gc_total, gc_time_sum/gc_total );
     fflush(gc_log_file_);
     fclose(gc_log_file_);
   }
@@ -1510,9 +1526,10 @@ Zone *SubZonedBlockDevice::AllocateZone(Env::WriteLifeTimeHint lifetime,
     //alloc_log
     //시간 / zone nr / 파일이름 / free space / gc done
     //gc_done 여부 확인해서 값 바꿔주기.
-    auto it = find(gc_done_Zones.begin(), gc_done_Zones.end(), zone->GetZoneNr());
-    gc_done_Zone = (it != gc_done_Zones.end())? "GC DONE" : "";
+    //auto it = find(gc_done_Zones.begin(), gc_done_Zones.end(), zone->GetZoneNr());
+    //gc_done_Zone = (it != gc_done_Zones.end())? "GC DONE" : "";
     //alloc_log
+    /*
     fprintf(alloc_log_file_, "%-10ld%-8lu%-45s%-15lu%-15s\n",
             (long int)((double)clock() / CLOCKS_PER_SEC * 1000),
             zone->GetZoneNr(), zone_file->GetFilename().c_str(),
@@ -1521,6 +1538,7 @@ Zone *SubZonedBlockDevice::AllocateZone(Env::WriteLifeTimeHint lifetime,
     //프린트 하고 값 삭제
     gc_done_Zones.erase(remove(gc_done_Zones.begin(), gc_done_Zones.end(), zone->GetZoneNr()), gc_done_Zones.end());
     gc_done_Zone = "";
+    */
   } else {
     fprintf(zone_log_file_, "%-10ld%-8s%-8lu%-8lu%-45s%-10u%-10lu%-10u\n",
             (long int)((double)clock() / CLOCKS_PER_SEC * 1000), "EXHAUST",

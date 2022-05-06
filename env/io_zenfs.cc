@@ -159,7 +159,7 @@ ZoneFile::ZoneFile(ZonedBlockDevice* zbd, std::string filename,
       filename_(filename),
       file_id_(file_id),
       nr_synced_extents_(0) {
-        s_zbd_ = zbd->AllocateSubZBD();
+        s_zbd_ = zbd->AllocateSubZBD(this);
       }
 
 std::string ZoneFile::GetFilename() { return filename_; }
