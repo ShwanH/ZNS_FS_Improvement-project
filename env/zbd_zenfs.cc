@@ -502,6 +502,7 @@ SubZonedBlockDevice *ZonedBlockDevice::AllocateSubZBD(ZoneFile* zonefile){
             zonefile->GetFilename().c_str(),
             ret->GetFreeSpace(), ret->IsGcRunning()?"Y":"N" );
   fflush(ret->GetAllocLog());
+  ret->CountAlloc();
 #endif
   return ret;
 }
@@ -1024,6 +1025,8 @@ SubZonedBlockDevice::~SubZonedBlockDevice() {
   }
 //alloc_log
   if (alloc_log_file_ != nullptr) {
+    fprintf(alloc_log_file_,"TOTAL FILE ALLOC : %-8lu\n",count_alloc);
+    fflush(alloc_log_file_);
     fclose(alloc_log_file_);
   }
 

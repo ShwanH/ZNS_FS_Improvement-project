@@ -257,7 +257,7 @@ class SubZonedBlockDevice{
     //list for gc done zones num
     //std::vector<int> gc_done_Zones;
     //std::string gc_done_Zone;
-  
+    uint64_t count_alloc = 0;
     char *gc_buffer_;
 
     unsigned int max_nr_active_io_zones_;
@@ -321,6 +321,7 @@ class SubZonedBlockDevice{
     unsigned int GetMaxNrActiveIOZone() { return max_nr_active_io_zones_; }
     bool IsGcRunning(){return is_gc_running;}
     FILE *GetAllocLog(){return alloc_log_file_;}
+    void CountAlloc(){count_alloc++;}
   private:
     void GarbageCollectionThread(void);
     uint32_t GarbageCollection(const bool &is_trigger,
