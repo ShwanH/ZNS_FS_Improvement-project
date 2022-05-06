@@ -1018,7 +1018,7 @@ SubZonedBlockDevice::~SubZonedBlockDevice() {
 //gc_log
   if (gc_log_file_ != nullptr) {
     //gc_testing..
-    fprintf(gc_log_file_, "%-10s%-8lu%-8lu, AVG GC TIME \n", "TOTAL GC NUM : ", gc_total, gc_time_sum/gc_total );
+    fprintf(gc_log_file_, "%-10s%-8lu, AVG GC TIME : %-8lu\n", "TOTAL GC NUM : ", gc_total, gc_total?gc_time_sum/gc_total:0 );
     fflush(gc_log_file_);
     fclose(gc_log_file_);
   }
