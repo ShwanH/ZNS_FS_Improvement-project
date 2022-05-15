@@ -590,7 +590,7 @@ SubZonedBlockDevice::SubZonedBlockDevice(std::string bdevname,
   gc_rate_limiter_ = 0;
   reset_rate_limiter_ = 0;
   for(int i=ZONE_INVALID_LOW;i<=ZONE_INVALID_MAX;i++){
-    gc_victim_sum_[i] = 0;
+    gc_victim_sum_.push_back(0);
   }
 };
 
