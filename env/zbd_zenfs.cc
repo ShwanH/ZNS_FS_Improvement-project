@@ -756,7 +756,7 @@ IOStatus SubZonedBlockDevice::Open(bool readonly) {
   std::stringstream sstr_reset;
   sstr_reset<<bdevname_<<"_RESET_TEST_FILE.log";
   FILE* reset_test_file = fopen(sstr_reset.str().c_str(),"a");
-  fprintf(reset_test_file,"%-8d USED CAPACITY SUM : %-8ld\n",time(NULL),used_capacity_sum);
+  fprintf(reset_test_file,"%-8ld USED CAPACITY SUM : %-8d\n",time(NULL),used_capacity_sum);
   fflush(reset_test_file);
   fclose(reset_test_file);
 #endif
