@@ -358,7 +358,7 @@ IOStatus ZonedBlockDevice::Open(bool readonly) {
     if(s != IOStatus::OK()) return s;
   }
   cpu_check_file_ = fopen("cpu_check.log","w");
-  fprintf(cpu_check_file_,"%-10s %-10s %-15s\n","TIME(ms)","CPU USAGE(%)","GC RUNNING ZNS");
+  fprintf(cpu_check_file_,"%-10s %-10s %-20s\n","TIME(ms)","CPU USAGE(%)","GC RUNNING ZNS");
   fflush(cpu_check_file_);
 #ifdef ZONE_CUSTOM_DEBUG
   check_thread_= new std::thread(&ZonedBlockDevice::LogCPUCheck,this);
@@ -368,7 +368,7 @@ IOStatus ZonedBlockDevice::Open(bool readonly) {
 }
 
 void ZonedBlockDevice::LogCPUCheck(){
-  while(check_thread_stop = false){
+  while(check_thread_stop == false){
     WaitUntilGCOn(CPU_CHECK_THREAD_TICK);
     std::stringstream sstr_gc_zns;
     for(auto s_zbd:s_zbds_){
@@ -748,14 +748,14 @@ IOStatus SubZonedBlockDevice::Open(bool readonly) {
       new std::thread(&SubZonedBlockDevice::GarbageCollectionThread, this);
   assert(nullptr != gc_thread_);
 #endif
-#ifdef ZONE_CUMSTOM_DEBUG
+#ifdef ZONE_CUSTOM_DEBUG
   uint32_t used_capacity_sum = 0;
   for(auto io_zone:io_zones){
     used_capacity_sum += io_zone->used_capacity_;
   }
   std::stringstream sstr_reset;
-  sstr_reset<<bdevname<<"_RESET_TEST_FILE.log";
-  File* reset_test_file = fopen(sstr_reset.str().c_str(),"a");
+  sstr_reset<<bdevname_<<"_RESET_TEST_FILE.log";
+  FILE* reset_test_file = fopen(sstr_reset.str().c_str(),"a");
   fprintf(reset_test_file,"%-8ld USED CAPACITY SUM : %-8ld\n",time(NULL),used_capacity_sum);
   fflush(reset_test_file);
   fclose(reset_test_file);

@@ -52,7 +52,10 @@ public:
         return percent;
     }
     double getAVGUsage(){
-        return check_sum/check_count;
+        if(check_count)
+            return check_sum/check_count;
+        else   
+            return 0;
     }
 };
 }
