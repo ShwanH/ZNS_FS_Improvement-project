@@ -36,7 +36,7 @@
 #include <map>
 #include "rocksdb/env.h"
 #include "rocksdb/io_status.h"
-
+#include "cpu_check.h"
 #define ZONE_CUSTOM_DEBUG
 
 // #define ORIGINAL
@@ -80,7 +80,7 @@
 #define ZONE_GC_THREAD_TICK (std::chrono::milliseconds(1000))
 
 #define ZONE_MAX_NOTIFY_RETRY (10)
-
+#define CPU_CHECK_THREAD_TICK (std::chrono::seconds(5))
 //#define ZONE_TIME_CHECK
 
 #if defined(ZONE_CUSTOM_DEBUG)
@@ -276,7 +276,8 @@ class SubZonedBlockDevice{
   #else
     std::mutex *files_mtx_;
   #endif
-
+    std::mutex *check_thread_mutex_;
+    std::condition_variable *cpu_check_cond_;
     // below 2 member only for zone allocation
     std::vector<Zone *> occupied_zones_[Env::WLTH_EXTREME + 1];
     std::priority_queue<Zone *, std::vector<Zone *>, EmptyZoneCompare>
@@ -292,6 +293,7 @@ class SubZonedBlockDevice{
 
     uint64_t GetFreeSpace();
     std::string GetFilename();
+    std::string GetBdevname();
     uint32_t GetBlockSize();
     uint32_t GetEmptyZones();
 
@@ -314,7 +316,7 @@ class SubZonedBlockDevice{
     void NotifyIOZoneClosed();
     void NotifyZoneAllocateAvail();
     void NotifyGarbageCollectionRun();
-
+    void NotifyGCOn();
     long GetOpenIOZone() { return open_io_zones_; }
     unsigned int GetMaxNrOpenIOZone() { return max_nr_open_io_zones_; }
     long GetActiveIOZone() { return active_io_zones_; }
@@ -357,7 +359,12 @@ class ZonedBlockDevice {
   unsigned int meta_num_; // Turn number of S_ZBD's meta zone allocation.
   std::string filename_;
   std::shared_ptr<Logger> logger_;
-  
+  CPUChecker cpu_checker_;
+  FILE* cpu_check_file_;
+  std::thread *check_thread_;
+  std::atomic<bool> check_thread_stop;
+  std::mutex check_thread_mutex_;
+  std::condition_variable cpu_check_cond_;
  public:
   explicit ZonedBlockDevice(std::string bdevname,
                             std::shared_ptr<Logger> logger);
@@ -394,7 +401,10 @@ class ZonedBlockDevice {
   void SetFinishTreshold(uint32_t threshold);
  
  private:
- unsigned int GetMetaNum();
+  unsigned int GetMetaNum();
+  void LogCPUCheck();
+  template <class Duration>
+  void WaitUntilGCOn(const Duration &duration);
 };
 }  // namespace ROCKSDB_NAMESPACE
 #endif  // !defined(ROCKSDB_LITE) && defined(OS_LINUX) && defined(LIBZBD)

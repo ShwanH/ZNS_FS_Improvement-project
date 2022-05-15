@@ -342,11 +342,14 @@ ZonedBlockDevice::ZonedBlockDevice(std::string bdevname,std::shared_ptr<Logger> 
   #ifdef INDEPENDENT_GC_THREAD
     zonefile_mtxs_.insert({s_zbd,&(s_zbd->zonefile_mtx_)});
   #endif
+    s_zbd->check_thread_mutex_ = &(this->check_thread_mutex_);
+    s_zbd->cpu_check_cond_ = &(this->cpu_check_cond_);
   }
 #ifndef INDEPENDENT_GC_THREAD
   files_mtx_ = nullptr;
 #endif
   meta_num_ = 0;
+  check_thread_stop = false;
 }
 
 IOStatus ZonedBlockDevice::Open(bool readonly) {
@@ -354,7 +357,38 @@ IOStatus ZonedBlockDevice::Open(bool readonly) {
     IOStatus s = s_zbd->Open(readonly);
     if(s != IOStatus::OK()) return s;
   }
+  cpu_check_file_ = fopen("cpu_check.log","w");
+  fprintf(cpu_check_file_,"%-10s %-10s %-15s\n","TIME(ms)","CPU USAGE(%)","GC RUNNING ZNS");
+  fflush(cpu_check_file_);
+#ifdef ZONE_CUSTOM_DEBUG
+  check_thread_= new std::thread(&ZonedBlockDevice::LogCPUCheck,this);
+  assert(check_thread_!=nullptr);
+#endif
   return IOStatus::OK();
+}
+
+void ZonedBlockDevice::LogCPUCheck(){
+  while(check_thread_stop = false){
+    WaitUntilGCOn(CPU_CHECK_THREAD_TICK);
+    std::stringstream sstr_gc_zns;
+    for(auto s_zbd:s_zbds_){
+      if(s_zbd->IsGcRunning()){
+        sstr_gc_zns<<s_zbd->GetBdevname()<<" ";
+      }
+    }
+    fprintf(cpu_check_file_,"%-10ld %-10f %-15s\n",
+      (long int)((double)clock() / CLOCKS_PER_SEC * 1000),cpu_checker_.getCurrentValue(),sstr_gc_zns.str().c_str());
+    fflush(cpu_check_file_);
+  }
+}
+
+template <class Duration>
+void ZonedBlockDevice::WaitUntilGCOn(const Duration &duration){
+  std::unique_lock<std::mutex> lk(check_thread_mutex_);
+  cpu_check_cond_.wait_for(lk, duration, [this]() {
+    if(check_thread_stop) return true; 
+    return false;
+  });
 }
 
 uint64_t ZonedBlockDevice::GetFreeSpace() {
@@ -399,6 +433,16 @@ ZonedBlockDevice::~ZonedBlockDevice(){
   for(auto s_zbd:s_zbds_){
     delete s_zbd;
   }
+  check_thread_stop = true;
+  if(check_thread_){
+    check_thread_->join();
+    free(check_thread_);
+  }
+#ifdef ZONE_CUSTOM_DEBUG
+  fprintf(cpu_check_file_,"AVG CPU USAGE : %-5f",cpu_checker_.getAVGUsage());
+  fflush(cpu_check_file_);
+#endif
+  fclose(cpu_check_file_);
 }
 
 Zone* ZonedBlockDevice::AllocateMetaZone(){
@@ -704,7 +748,18 @@ IOStatus SubZonedBlockDevice::Open(bool readonly) {
       new std::thread(&SubZonedBlockDevice::GarbageCollectionThread, this);
   assert(nullptr != gc_thread_);
 #endif
-
+#ifdef ZONE_CUMSTOM_DEBUG
+  uint32_t used_capacity_sum = 0;
+  for(auto io_zone:io_zones){
+    used_capacity_sum += io_zone->used_capacity_;
+  }
+  std::stringstream sstr_reset;
+  sstr_reset<<bdevname<<"_RESET_TEST_FILE.log";
+  File* reset_test_file = fopen(sstr_reset.str().c_str(),"a");
+  fprintf(reset_test_file,"%-8ld USED CAPACITY SUM : %-8ld\n",time(NULL),used_capacity_sum);
+  fflush(reset_test_file);
+  fclose(reset_test_file);
+#endif
   return IOStatus::OK();
 }
 
@@ -856,6 +911,7 @@ uint32_t SubZonedBlockDevice::GarbageCollection(
         fflush(gc_log_file_);
         start_time = (long int)((double)clock() / CLOCKS_PER_SEC * 1000);
       }
+      NotifyGCOn();
 #endif
       (void)ValidDataCopy(lifetime, victim);
 #ifdef ZONE_CUSTOM_DEBUG
@@ -939,6 +995,11 @@ void SubZonedBlockDevice::NotifyGarbageCollectionRun() {
   }
 #endif
   gc_force_cond_.notify_all();
+}
+
+void SubZonedBlockDevice::NotifyGCOn(){
+  const std::lock_guard<std::mutex> lock(*check_thread_mutex_);
+  cpu_check_cond_->notify_one();
 }
 
 uint64_t SubZonedBlockDevice::GetFreeSpace() {
@@ -1558,6 +1619,7 @@ Zone *SubZonedBlockDevice::AllocateZone(Env::WriteLifeTimeHint lifetime,
 }
 
 std::string SubZonedBlockDevice::GetFilename() { return filename_; }
+std::string SubZonedBlockDevice::GetBdevname() { return bdevname_; }
 uint32_t SubZonedBlockDevice::GetBlockSize() { return block_sz_; }
 }  // namespace ROCKSDB_NAMESPACE
 

@@ -29,7 +29,7 @@ echo "TARGET_FILE_SIZE_MULTIPLIER=$TARGET_FILE_SIZE_MULTIPLIER"
 echo "MAX_BYTES_FOR_LEVEL_BASE=$MAX_BYTES_FOR_LEVEL_BASE bytes"
 
 # test must be executed based on the 6,000,000
-NR_KEYS=6000000
+NR_KEYS=5000000
 #NR_KEYS=1000000
 
 echo deadline > /sys/class/block/$DEV_1/queue/scheduler
