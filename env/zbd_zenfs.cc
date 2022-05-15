@@ -589,6 +589,9 @@ SubZonedBlockDevice::SubZonedBlockDevice(std::string bdevname,
   gc_force_ = false;
   gc_rate_limiter_ = 0;
   reset_rate_limiter_ = 0;
+  for(int i=ZONE_INVALID_LOW;i<=ZONE_INVALID_MAX;i++){
+    gc_victim_sum_[i] = 0;
+  }
 };
 
 IOStatus SubZonedBlockDevice::Open(bool readonly) {
@@ -885,6 +888,9 @@ uint32_t SubZonedBlockDevice::GarbageCollection(
     if (victim_queue_[invalid_level].empty()) {
       ZoneSelectVictim(invalid_level, is_force);
     }
+    fprintf(gc_log_file_,"VICTIM NUM OF LEVEL %d : %-5ld\n",invalid_level,victim_queue_[invalid_level].size());
+    fflush(gc_log_file_);
+    gc_victim_sum_[invalid_level] += victim_queue_[invalid_level].size();
     while (!victim_queue_[invalid_level].empty()) {
       Zone *victim = victim_queue_[invalid_level].top();
       assert(victim != nullptr);
@@ -1081,6 +1087,9 @@ SubZonedBlockDevice::~SubZonedBlockDevice() {
   if (gc_log_file_ != nullptr) {
     //gc_testing..
     fprintf(gc_log_file_, "%-10s%-8lu, AVG GC TIME : %-8lu\n", "TOTAL GC NUM : ", gc_total, gc_total?gc_time_sum/gc_total:0 );
+    for(int i=ZONE_INVALID_LOW;i<=ZONE_INVALID_MAX;i++){
+      fprintf(gc_log_file_,"LEVEL %d VICTIM SUM : %-5d",i,gc_victim_sum_[i]);
+    }
     fflush(gc_log_file_);
     fclose(gc_log_file_);
   }

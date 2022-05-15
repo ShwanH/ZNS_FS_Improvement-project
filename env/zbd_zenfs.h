@@ -263,7 +263,7 @@ class SubZonedBlockDevice{
     unsigned int max_nr_active_io_zones_;
     unsigned int max_nr_open_io_zones_;
     bool is_gc_running = false;
-
+    std::map<int,int> gc_victim_sum_;
     Zone *AllocateZoneImpl(Env::WriteLifeTimeHint lifetime, ZoneFile *file,
                          int *is_empty);
   public:
